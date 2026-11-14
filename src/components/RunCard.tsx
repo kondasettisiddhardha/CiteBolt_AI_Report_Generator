@@ -1,0 +1,69 @@
+import { Link } from "react-router-dom";
+import { formatDistanceToNow } from "date-fns";
+import { Clock, FileText, ExternalLink, Rss, Trash2 } from "lucide-react";
+import type { RunItem } from "@/hooks/useRuns";
+import { exportUrl } from "@/lib/api";
+import StatusBadge from "./StatusBadge";
+
+export default function RunCard({ run, onDelete }: { run: RunItem; onDelete?: (run: RunItem) => void }) {
+  const finishedAt = run.completedAt ?? run.createdAt;
+
+  return (
+    <article className="flex flex-col gap-4 rounded-xl border border-line bg-card p-4 transition-colors hover:border-line-strong sm:flex-row sm:items-start sm:justify-between sm:p-5">
+      <div className="order-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={run.status} />
+          <span className="text-sm text-muted" aria-hidden="true">
+            ·
+          </span>
+          <time className="text-sm text-muted" dateTime={finishedAt}>
+            {formatDistanceToNow(new Date(finishedAt), { addSuffix: true })}
+          </time>
+        </div>
+
+        <h3 className="mt-2 truncate text-xl font-semibold tracking-tight text-fg">{run.topic}</h3>
+        <p className="mt-1 truncate text-sm text-muted">{run.sourcesCount} cited sources</p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted">
+          <span className="inline-flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+            {formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Rss className="h-3.5 w-3.5" aria-hidden="true" />
+            {run.sourcesCount} sources
+          </span>
+        </div>
+      </div>
+
+      <div className="order-2 flex items-center gap-2 sm:shrink-0">
+        {run.status === "completed" && (
+          <a
+            href={exportUrl(run.id, "md")}
+            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-fg"
+          >
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+            MD
+          </a>
+        )}
+        <Link
+          to={`/runs/${run.id}`}
+          className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-fg"
+        >
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          Open
+        </Link>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(run)}
+            aria-label={`Delete ${run.topic}`}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-line text-muted transition-colors hover:border-red-300 hover:text-red-600 dark:hover:text-red-400"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}

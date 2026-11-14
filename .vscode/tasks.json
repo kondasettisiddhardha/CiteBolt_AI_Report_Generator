@@ -1,0 +1,60 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "App: start both",
+      "dependsOrder": "parallel",
+      "dependsOn": ["Backend: API", "Frontend: Vite"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Backend: API",
+      "type": "process",
+      "command": "${workspaceFolder}\\backend\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "uvicorn", "app.main:app", "--reload", "--port", "8000"],
+      "options": { "cwd": "${workspaceFolder}\\backend" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "servers",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Frontend: Vite",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "servers",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Backend: setup",
+      "dependsOrder": "sequence",
+      "dependsOn": ["Backend: create venv", "Backend: install dependencies"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Backend: create venv",
+      "type": "shell",
+      "command": "python -m venv .venv",
+      "options": { "cwd": "${workspaceFolder}\\backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Backend: install dependencies",
+      "type": "process",
+      "command": "${workspaceFolder}\\backend\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "pip", "install", "-r", "requirements.txt"],
+      "options": { "cwd": "${workspaceFolder}\\backend" },
+      "problemMatcher": []
+    }
+  ]
+}

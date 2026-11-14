@@ -1,0 +1,18 @@
+.env
+.env.local
+node_modules/
+dist/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# SQLite database and sidecar files
+reports.db
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+
+*.tgz
+*.zip

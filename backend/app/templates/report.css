@@ -1,0 +1,220 @@
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/Inter-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/Inter-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/Inter-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/Inter-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+@page {
+  size: A4;
+  margin: 22mm 20mm;
+
+  @bottom-left {
+    content: "Dossier";
+    font-family: "Inter", sans-serif;
+    font-size: 8pt;
+    color: #8a8a8a;
+    border-top: 0.5pt solid #e5e5e5;
+    padding-top: 4pt;
+    width: 30%;
+  }
+  @bottom-center {
+    content: string(report-title);
+    font-family: "Inter", sans-serif;
+    font-size: 8pt;
+    color: #8a8a8a;
+    border-top: 0.5pt solid #e5e5e5;
+    padding-top: 4pt;
+    width: 40%;
+    text-align: center;
+  }
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+    font-family: "Inter", sans-serif;
+    font-size: 8pt;
+    color: #8a8a8a;
+    border-top: 0.5pt solid #e5e5e5;
+    padding-top: 4pt;
+    width: 30%;
+    text-align: right;
+  }
+}
+
+/* The title block lives on page 1, so page 1 needs no footer. */
+@page :first {
+  @bottom-left { content: none; border: none; }
+  @bottom-center { content: none; border: none; }
+  @bottom-right { content: none; border: none; }
+}
+
+* { box-sizing: border-box; }
+
+html {
+  font-family: "Inter", sans-serif;
+  font-size: 10.5pt;
+  color: #1a1a1a;
+  line-height: 1.6;
+}
+
+body { margin: 0; }
+
+p, li { orphans: 3; widows: 3; }
+p { margin: 0 0 8pt; }
+
+a { color: #4f46e5; text-decoration: none; }
+
+/* --- header block ------------------------------------------------- */
+.report-header {
+  border-bottom: 1.5pt solid #4f46e5;
+  padding-bottom: 14pt;
+  margin-bottom: 18pt;
+}
+
+.eyebrow {
+  font-size: 8pt;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+  margin: 0 0 8pt;
+}
+
+h1.report-title {
+  string-set: report-title content();
+  font-size: 26pt;
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: -0.01em;
+  margin: 0 0 10pt;
+  color: #111113;
+}
+
+.meta {
+  font-size: 8.5pt;
+  color: #6b6b72;
+  margin: 0;
+}
+.meta span + span::before {
+  content: "  ·  ";
+  color: #b4b4bb;
+}
+
+/* --- executive summary callout ------------------------------------ */
+.callout {
+  background: #f5f5ff;
+  border-left: 3pt solid #4f46e5;
+  border-radius: 6pt;
+  padding: 14pt 16pt;
+  margin: 0 0 18pt;
+}
+.callout h2 {
+  margin: 0 0 6pt !important;
+  font-size: 12pt !important;
+  color: #312e81 !important;
+}
+.callout p:last-child { margin-bottom: 0; }
+
+/* --- headings ----------------------------------------------------- */
+h2 {
+  font-size: 15pt;
+  font-weight: 600;
+  color: #111113;
+  margin: 20pt 0 8pt;
+  page-break-after: avoid;
+  break-after: avoid;
+}
+h3 {
+  font-size: 12pt;
+  font-weight: 600;
+  color: #1f1f23;
+  margin: 14pt 0 6pt;
+  page-break-after: avoid;
+  break-after: avoid;
+}
+h2 + p, h3 + p { margin-top: 0; }
+
+/* --- lists -------------------------------------------------------- */
+ul, ol { margin: 0 0 10pt; padding-left: 16pt; }
+li { margin: 0 0 4pt; }
+li::marker { color: #4f46e5; }
+
+/* --- tables ------------------------------------------------------- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8pt 0 14pt;
+  font-size: 9pt;
+  page-break-inside: avoid;
+}
+thead th {
+  background: #f4f4f6;
+  text-align: left;
+  font-weight: 600;
+  color: #111113;
+  padding: 6pt 8pt;
+  border-bottom: 0.75pt solid #dcdce2;
+}
+tbody td {
+  padding: 6pt 8pt;
+  border-bottom: 0.5pt solid #ececf1;
+  vertical-align: top;
+}
+tbody tr:nth-child(even) td { background: #fafafc; }
+
+/* --- citations ---------------------------------------------------- */
+sup.cite {
+  font-size: 7pt;
+  vertical-align: super;
+  line-height: 0;
+}
+sup.cite a { color: #4f46e5; font-weight: 500; }
+
+/* --- sources ------------------------------------------------------ */
+.sources { page-break-before: auto; }
+.sources ol { padding-left: 18pt; }
+.sources li { margin-bottom: 7pt; }
+.sources .source-title { font-weight: 600; color: #111113; }
+.sources .source-domain { color: #8a8a8a; font-size: 9pt; }
+.sources .source-url {
+  display: block;
+  font-size: 8pt;
+  color: #6b6b72;
+  word-break: break-all;
+}
+.sources .source-description { color: #4b4b52; font-size: 9pt; }
+
+blockquote {
+  margin: 10pt 0;
+  padding-left: 10pt;
+  border-left: 2pt solid #e5e5e5;
+  color: #4b4b52;
+  font-style: italic;
+}
+
+code {
+  font-family: "DejaVu Sans Mono", monospace;
+  font-size: 9pt;
+  background: #f4f4f6;
+  padding: 0 2pt;
+  border-radius: 2pt;
+}
+
+hr { border: none; border-top: 0.5pt solid #e5e5e5; margin: 14pt 0; }
