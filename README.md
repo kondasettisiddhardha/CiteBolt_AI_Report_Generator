@@ -1,6 +1,6 @@
-# Dossier — research, distilled
+# Citebolt — research, distilled
 
-Dossier turns a topic into a source-cited research report. A three-agent LangGraph pipeline
+Citebolt turns a topic into a source-cited research report. A three-agent LangGraph pipeline
 (Research → Analysis → Writing) searches the web, extracts structured insights, and writes a
 Markdown report you can read, export and come back to.
 

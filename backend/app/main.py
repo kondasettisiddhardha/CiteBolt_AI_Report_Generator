@@ -1,4 +1,4 @@
-"""Dossier API.
+"""Citebolt API.
 
 Auth: email one-time codes, verified into an httpOnly JWT cookie.
 Runs: created in SQLite (or Postgres), executed by a background thread, streamed
@@ -21,6 +21,8 @@ import re
 
 from app.text import (
     _normalise_sources_list,
+    build_sources_markdown,
+    filter_and_renumber_sources,
     normalize_text,
     prepare_report,
     renumber_citations,
@@ -59,9 +61,9 @@ from app.security import (
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("dossier")
+logger = logging.getLogger("citebolt")
 
-app = FastAPI(title="Dossier API", version="2.0.0")
+app = FastAPI(title="Citebolt API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,7 +84,7 @@ init_db()
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
-    logger.info("Dossier API ready")
+    logger.info("Citebolt API ready")
 
 
 # --- health ------------------------------------------------------------
@@ -184,6 +186,7 @@ def verify_code(payload: dict[str, Any], response: Response, db: Session = Depen
 @app.post("/api/auth/logout")
 def logout(response: Response) -> dict[str, bool]:
     response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie("dossier_session", path="/")
     return {"ok": True}
 
 
@@ -196,7 +199,6 @@ def me(user: User | None = Depends(get_optional_user)) -> dict[str, Any]:
 
 # --- runs --------------------------------------------------------------
 def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
-    s_sources = json.loads(run.sources_json or "[]")
     data: dict[str, Any] = {
         "id": run.id,
         "topic": run.topic,
@@ -204,6 +206,10 @@ def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
         "report_type": run.report_type,
         "status": run.status,
         "sources_count": run.sources_count,
+        "word_count": run.word_count or (len(run.report_markdown.split()) if run.report_markdown else 0),
+        "token_count": run.token_count or 0,
+        "cost_usd": float(run.cost_usd or 0.0),
+        "elapsed_seconds": run.elapsed_seconds or 0,
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "error_message": run.error_message,
@@ -219,87 +225,83 @@ def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
     return data
 
 
-    def _owned_run(run_id: str, user: User, db: Session) -> Run:
-        run = db.get(Run, run_id)
-        if run is None or (run.user_id and run.user_id != user.id):
-            raise HTTPException(status_code=404, detail="Run not found.")
-        return run
+def _owned_run(run_id: str, user: User, db: Session) -> Run:
+    run = db.get(Run, run_id)
+    if run is None or (run.user_id and run.user_id != user.id):
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return run
 
 
-    @app.get("/api/runs")
-    def list_runs(
-        limit: int = Query(default=20, ge=1, le=100),
-        q: str | None = Query(default=None, max_length=200),
-        user: User = Depends(get_current_user),
-        db: Session = Depends(get_db),
-    ) -> list[dict[str, Any]]:
-        stmt = select(Run).where(Run.user_id == user.id)
-        if q:
-            stmt = stmt.where(Run.topic.ilike(f"%{q.strip()}%"))
-        stmt = stmt.order_by(Run.created_at.desc()).limit(limit)
-        return [_run_payload(run) for run in db.scalars(stmt).all()]
+@app.get("/api/runs")
+def list_runs(
+    limit: int = Query(default=20, ge=1, le=100),
+    q: str | None = Query(default=None, max_length=200),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    stmt = select(Run).where(Run.user_id == user.id)
+    if q:
+        stmt = stmt.where(Run.topic.ilike(f"%{q.strip()}%"))
+    stmt = stmt.order_by(Run.created_at.desc()).limit(limit)
+    return [_run_payload(run) for run in db.scalars(stmt).all()]
 
 
-    @app.post("/api/research")
-    def start_research(
-        payload: dict[str, Any],
-        user: User = Depends(get_current_user),
-        db: Session = Depends(get_db),
-    ) -> dict[str, str]:
-        topic = str(payload.get("topic") or "").strip()
-        if not topic:
-            raise HTTPException(status_code=400, detail="Enter a topic to research.")
-        if len(topic) > MAX_TOPIC_CHARS:
-            raise HTTPException(status_code=400, detail=f"Keep the topic under {MAX_TOPIC_CHARS} characters.")
+@app.post("/api/research")
+def start_research(
+    payload: dict[str, Any],
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    topic = str(payload.get("topic") or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Enter a topic to research.")
+    if len(topic) > MAX_TOPIC_CHARS:
+        raise HTTPException(status_code=400, detail=f"Keep the topic under {MAX_TOPIC_CHARS} characters.")
 
-        context = payload.get("context") or ""
-        if isinstance(context, dict):
-            context = json.dumps(context, ensure_ascii=False)
-        context = str(context)
-        if len(context) > MAX_CONTEXT_CHARS:
-            raise HTTPException(
-                status_code=400, detail=f"Background material must stay under {MAX_CONTEXT_CHARS:,} characters."
-            )
+    context = payload.get("context") or ""
+    if isinstance(context, dict):
+        context = json.dumps(context, ensure_ascii=False)
+    context = str(context)
+    if len(context) > MAX_CONTEXT_CHARS:
+        context = context[:MAX_CONTEXT_CHARS]
 
-        report_type = str(payload.get("reportType") or "auto").strip().lower()
-        if report_type not in REPORT_TYPES:
-            raise HTTPException(status_code=400, detail="Pick a supported report type.")
+    report_type = str(payload.get("reportType") or "auto").strip().lower()
+    if report_type not in REPORT_TYPES:
+        raise HTTPException(status_code=400, detail="Pick a supported report type.")
 
-        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        today = db.scalar(
-            select(func.count(Run.id)).where(Run.user_id == user.id, Run.created_at >= day_start)
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = db.scalar(
+        select(func.count(Run.id)).where(Run.user_id == user.id, Run.created_at >= day_start)
+    )
+    if (today or 0) >= DAILY_RUN_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"You've reached the limit of {DAILY_RUN_LIMIT} runs today. Try again tomorrow.",
         )
-        if (today or 0) >= DAILY_RUN_LIMIT:
-            raise HTTPException(
-                status_code=429,
-                detail=f"You've reached the limit of {DAILY_RUN_LIMIT} runs today. Try again tomorrow.",
-            )
 
-        run = Run(
-            id=new_id(),
-            user_id=user.id,
-            topic=topic,
-            report_type=report_type,
-            status="running",
-            context=context,
-            created_at=datetime.now(timezone.utc),
-        )
-        db.add(run)
-        db.commit()
+    run = Run(
+        id=new_id(),
+        user_id=user.id,
+        topic=topic,
+        report_type=report_type,
+        status="running",
+        context=context,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(run)
+    db.commit()
 
-        initial_state = {
-            "topic": topic,
-            "status": {"current_node": "research", "message": "Starting.", "started_at": None},
-            "sources": [],
-            "insights": {},
-            "report": "",
-            "errors": [],
-            "event_meta": None,
-            "context": context,
-            "report_type": report_type,
-        }
-
-
+    initial_state = {
+        "topic": topic,
+        "status": {"current_node": "research", "message": "Starting.", "started_at": None},
+        "sources": [],
+        "insights": {},
+        "report": "",
+        "errors": [],
+        "event_meta": None,
+        "context": context,
+        "report_type": report_type,
+    }
 
     def finalise(run_id: str, state: dict[str, Any], cancelled: bool) -> None:
         from app.db import SessionLocal
@@ -320,7 +322,7 @@ def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
                 )
                 # Keep every display value computed once per run by the backend.
                 cleaned_sources = _normalise_sources_list(sources)
-                renumbered_markdown = renumber_citations(
+                renumbered_markdown, final_sources = filter_and_renumber_sources(
                     clean_markdown, cleaned_sources
                 )
                 body_for_word_count = strip_sources_section(
@@ -329,8 +331,9 @@ def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
                 row.status = "completed"
                 row.title = report_title
                 row.report_markdown = renumbered_markdown
-                row.sources_json = json.dumps(cleaned_sources, ensure_ascii=False)
-                row.sources_count = len(cleaned_sources)
+                row.sources_json = json.dumps(final_sources, ensure_ascii=False)
+                row.sources_count = len(final_sources)
+                row.word_count = len(body_for_word_count.split())
                 row.token_count = int(state.get("token_usage") or 0)
                 row.cost_usd = float(state.get("cost") or 0.0)
                 row.elapsed_seconds = int(state.get("elapsed_seconds") or 0)
@@ -343,7 +346,6 @@ def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
             session.commit()
         finally:
             session.close()
-
 
     start_run(run.id, initial_state, finalise)
     return {"run_id": run.id}
@@ -517,7 +519,12 @@ def export_run(
         )
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     else:
-        content = run.report_markdown.encode("utf-8")
+        md_content = run.report_markdown or ""
+        if sources and not re.search(r"\n#{1,3}\s*(Sources|References)\b", md_content, re.IGNORECASE):
+            md_content = md_content.rstrip() + "\n\n" + build_sources_markdown(sources)
+        if not md_content.lstrip().startswith("# "):
+            md_content = f"# {report_title}\n\n{md_content}"
+        content = md_content.encode("utf-8")
         media = "text/markdown; charset=utf-8"
 
     stem = _slug(report_title or f"report-{run.id[:8]}")
@@ -554,7 +561,7 @@ async def extract_pdf(request: Request, user: User = Depends(get_current_user)) 
     if not text:
         raise HTTPException(
             status_code=422,
-            detail="That PDF has no text layer. If it's a scan, run OCR first or paste the text instead.",
+            detail="scan_no_text",
         )
     return {"text": text}
 

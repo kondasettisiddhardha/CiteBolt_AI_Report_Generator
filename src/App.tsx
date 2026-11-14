@@ -12,6 +12,7 @@ import Login from "@/pages/Login";
 import Workspace from "@/pages/Workspace";
 import NewRun from "@/pages/NewRun";
 import RunProgress from "@/pages/RunProgress";
+import Report from "@/pages/Report";
 import Runs from "@/pages/Runs";
 import Settings from "@/pages/Settings";
 import Contact from "@/pages/Contact";
@@ -72,6 +73,14 @@ export default function App() {
           ),
         },
         {
+          path: "/reports/:id",
+          element: (
+            <RequireAuth>
+              <Report />
+            </RequireAuth>
+          ),
+        },
+        {
           path: "/settings",
           element: (
             <RequireAuth>
@@ -84,5 +93,9 @@ export default function App() {
     },
   ]);
 
-  return <RouterProvider router={router} />;
+  return (
+    <AuthProvider>
+      <RouterProvider router={router} />
+    </AuthProvider>
+  );
 }

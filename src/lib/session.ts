@@ -4,7 +4,8 @@ import { useAuth } from "@/hooks/useAuth";
 
 /** Session helpers shared by the login page, the composer and the shell. */
 
-const DRAFT_KEY = "dossier-run-draft";
+const DRAFT_KEY = "citebolt-run-draft";
+const LEGACY_DRAFT_KEY = "dossier-run-draft";
 
 export interface RunDraftSnapshot {
   topic: string;
@@ -22,7 +23,7 @@ export function saveDraft(draft: RunDraftSnapshot): void {
 
 export function loadDraft(): RunDraftSnapshot | null {
   try {
-    const raw = window.sessionStorage.getItem(DRAFT_KEY);
+    const raw = window.sessionStorage.getItem(DRAFT_KEY) || window.sessionStorage.getItem(LEGACY_DRAFT_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<RunDraftSnapshot>;
     if (typeof parsed.topic !== "string") return null;

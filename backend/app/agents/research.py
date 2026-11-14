@@ -150,7 +150,7 @@ def _reachable(url: str) -> bool:
     """Only keep URLs that actually load. Never invent or rewrite a URL."""
     if not url.startswith(("http://", "https://")):
         return False
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; DossierBot/1.0)"}
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; CiteboltBot/1.0)"}
     for method in ("head", "get"):
         try:
             request = getattr(httpx, method)

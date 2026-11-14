@@ -69,10 +69,12 @@ export async function extractPdfText(file: File): Promise<string> {
     return await extractPdfOnServer(file);
   } catch (serverError) {
     const reason = serverError instanceof Error ? serverError.message : "";
-    if (reason.includes("no text layer") || reason.includes("OCR")) throw serverError;
-    if (browserError instanceof Error && browserError.message) {
-      throw new Error(`${reason || "Couldn't read that PDF."} If it's a scan, run OCR first.`);
+    if (reason.includes("scan_no_text") || reason.includes("no text layer")) {
+      throw new Error("This PDF has no text layer (scanned document). Please run OCR before uploading or paste the text directly.");
     }
-    throw new Error("Couldn't read text from that PDF. If it's a scan, run OCR first.");
+    if (browserError instanceof Error && browserError.message) {
+      throw new Error(reason || "Couldn't extract text from that PDF.");
+    }
+    throw new Error("Couldn't read text from that PDF. Scans without text layers cannot be read.");
   }
 }

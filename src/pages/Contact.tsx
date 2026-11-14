@@ -42,89 +42,96 @@ export default function Contact() {
   }
 
   return (
-    <div className="px-5 py-8 sm:px-10">
-      <div className="mx-auto max-w-[720px]">
-        <h1 className="text-2xl font-bold tracking-tight text-fg sm:text-[32px]">Contact</h1>
-        <p className="mt-2 text-sm text-muted">
+    <div className="text-left">
+      <header className="mb-6">
+        <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">
+          Support & Feedback
+        </p>
+        <h1 className="mt-2 text-[28px] font-bold tracking-tight text-fg sm:text-[34px]">
+          Contact
+        </h1>
+        <p className="mt-2 max-w-[640px] text-[16px] sm:text-[17px] leading-relaxed text-muted">
           Questions, bugs or feature ideas — send a note and a human will read it.
         </p>
+        {SUPPORT_EMAIL && (
+          <p className="mt-2 text-xs text-muted">
+            Direct email: <a href={`mailto:${SUPPORT_EMAIL}`} className="text-accent underline">{SUPPORT_EMAIL}</a>
+          </p>
+        )}
+      </header>
 
-        <form onSubmit={submit} className="mt-6 rounded-2xl border border-line bg-surface p-6">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="name" className="block text-xs font-medium text-muted">
-                Name
-              </label>
-              <input
-                id="name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-fg focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-              {errors.name && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.name}</p>}
-            </div>
-            <div>
-              <label htmlFor="email" className="block text-xs font-medium text-muted">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-fg focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-              {errors.email && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.email}</p>}
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <label htmlFor="subject" className="block text-xs font-medium text-muted">
-              Subject
+      <form onSubmit={submit} className="mt-6 max-w-[720px] rounded-2xl border border-line bg-surface p-6">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label htmlFor="name" className="block text-xs font-medium text-muted">
+              Name
             </label>
             <input
-              id="subject"
-              value={subject}
-              onChange={(event) => setSubject(event.target.value)}
-              className="mt-1 h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-fg focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-ring"
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+              className="mt-1 h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-fg placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring dark:border-white/20"
             />
-            {errors.subject && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.subject}</p>}
+            {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name}</p>}
           </div>
 
-          <div className="mt-4">
-            <label htmlFor="message" className="block text-xs font-medium text-muted">
-              Message
+          <div>
+            <label htmlFor="email" className="block text-xs font-medium text-muted">
+              Email
             </label>
-            <textarea
-              id="message"
-              rows={6}
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              className="mt-1 w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-ring"
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+              className="mt-1 h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-fg placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring dark:border-white/20"
             />
-            {errors.message && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.message}</p>}
+            {errors.email && <p className="mt-1 text-xs text-red-500">{errors.email}</p>}
           </div>
+        </div>
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-            {SUPPORT_EMAIL ? (
-              <p className="text-xs text-muted">
-                Or email us directly at{" "}
-                <a href={`mailto:${SUPPORT_EMAIL}`} className="text-accent underline">
-                  {SUPPORT_EMAIL}
-                </a>
-              </p>
-            ) : <div />}
-            <button
-              type="submit"
-              disabled={busy}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg disabled:opacity-60"
-            >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Send message
-            </button>
-          </div>
-        </form>
-      </div>
+        <div className="mt-4">
+          <label htmlFor="subject" className="block text-xs font-medium text-muted">
+            Subject
+          </label>
+          <input
+            id="subject"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="What is this about?"
+            className="mt-1 h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-fg placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring dark:border-white/20"
+          />
+          {errors.subject && <p className="mt-1 text-xs text-red-500">{errors.subject}</p>}
+        </div>
+
+        <div className="mt-4">
+          <label htmlFor="message" className="block text-xs font-medium text-muted">
+            Message
+          </label>
+          <textarea
+            id="message"
+            rows={5}
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Tell us what happened, or what you'd like to see..."
+            className="mt-1 w-full rounded-lg border border-line bg-bg p-3 text-sm text-fg placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring dark:border-white/20"
+          />
+          {errors.message && <p className="mt-1 text-xs text-red-500">{errors.message}</p>}
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex h-[42px] items-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-primary-fg shadow-sm transition hover:-translate-y-px disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            <span>Send message</span>
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

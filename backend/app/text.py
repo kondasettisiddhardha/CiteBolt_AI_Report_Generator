@@ -1,4 +1,4 @@
-"""Text normalization and report helpers for Dossier."""
+"""Text normalization and report helpers for Citebolt."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ def normalize_text(markdown: str) -> str:
     text = text.replace("\u00a0", " ")
     text = text.replace("\u2018", "'").replace("\u2019", "'")
     text = text.replace("\u201c", '"').replace("\u201d", '"')
+    text = text.replace("【", "[").replace("】", "]")
 
     for pattern, replacement in _NORMALIZE_SUBSTITUTIONS:
         text = pattern.sub(replacement, text)
@@ -232,7 +233,72 @@ def renumber_citations(markdown: str, sources: list[dict[str, Any]] | None) -> s
             return f"[{renumber_map[n]}]" if n in renumber_map else ""
         return ""
 
-    return re.sub(r"\[\d{1,3}\]", replace_order, markdown)
+    result = re.sub(r"\[\d{1,3}\]", replace_order, markdown)
+    return re.sub(r"(\d+)\s+%", r"\1%", result)
+
+
+def filter_and_renumber_sources(
+    markdown: str, sources: list[dict[str, Any]] | None
+) -> tuple[str, list[dict[str, Any]]]:
+    """Renumber citations 1..N with no gaps and drop uncited sources."""
+    if not markdown or not sources:
+        return markdown, sources or []
+
+    source_map: dict[int, dict[str, Any]] = {}
+    for idx, s in enumerate(sources, start=1):
+        sid = s.get("id") or s.get("number") or idx
+        try:
+            source_map[int(sid)] = s
+        except (ValueError, TypeError):
+            pass
+        if "orig_ids" in s and isinstance(s["orig_ids"], list):
+            for oid in s["orig_ids"]:
+                try:
+                    source_map[int(oid)] = s
+                except (ValueError, TypeError):
+                    pass
+
+    cited_order: list[int] = []
+    seen = set()
+    for m in re.finditer(r"\[(\d{1,3})\]", markdown):
+        num = int(m.group(1))
+        if num in source_map:
+            src_obj = source_map[num]
+            src_key = id(src_obj)
+            if src_key not in seen:
+                seen.add(src_key)
+                cited_order.append(num)
+
+    if not cited_order:
+        return re.sub(r"(\d+)\s+%", r"\1%", markdown), sources
+
+    new_sources: list[dict[str, Any]] = []
+    remapping: dict[int, int] = {}
+
+    for new_idx, old_num in enumerate(cited_order, start=1):
+        original_src = source_map[old_num]
+        src_copy = dict(original_src)
+        src_copy["id"] = new_idx
+        src_copy["number"] = new_idx
+        new_sources.append(src_copy)
+
+        remapping[old_num] = new_idx
+        if "orig_ids" in original_src and isinstance(original_src["orig_ids"], list):
+            for oid in original_src["orig_ids"]:
+                try:
+                    remapping[int(oid)] = new_idx
+                except (ValueError, TypeError):
+                    pass
+
+    def replace_citation(match: re.Match[str]) -> str:
+        val = int(match.group(1))
+        if val in remapping:
+            return f"[{remapping[val]}]"
+        return ""
+
+    updated_md = re.sub(r"\[(\d{1,3})\]", replace_citation, markdown)
+    updated_md = re.sub(r"(\d+)\s+%", r"\1%", updated_md)
+    return updated_md, new_sources
 
 
 def is_formal_table(block: str) -> bool:

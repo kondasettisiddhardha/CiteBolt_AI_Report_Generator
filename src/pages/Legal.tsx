@@ -1,12 +1,12 @@
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 
 function LegalLayout({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-bg px-5 py-10 text-fg sm:px-10">
-      <div className="mx-auto max-w-[720px]">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">Legal</p>
-        <h1 className="mt-3 text-3xl font-bold tracking-tight">{title}</h1>
-        <div className="mt-6 space-y-5 text-sm leading-7 text-muted [&_h2]:mt-6 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-fg">
+    <div className="text-left">
+      <div className="max-w-[760px]">
+        <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">Legal</p>
+        <h1 className="mt-2 text-[28px] font-bold tracking-tight text-fg sm:text-[34px]">{title}</h1>
+        <div className="mt-6 space-y-5 text-[15px] leading-relaxed text-muted [&_h2]:mt-6 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-fg">
           {children}
         </div>
         <footer className="mt-10 flex flex-wrap gap-4 border-t border-line pt-5 text-xs text-muted">
@@ -33,13 +33,13 @@ function LegalLayout({ title, children }: { title: string; children: React.React
 
 export function Privacy() {
   return (
-    <LegalLayout title="Privacy">
+    <LegalLayout title="Privacy Policy">
       <p>
-        Dossier keeps the smallest amount of data needed to run research reports for you. This page
+        Citebolt keeps the smallest amount of data needed to run research reports for you. This page
         explains exactly what is stored.
       </p>
       <h2>What we store</h2>
-      <ul className="list-disc space-y-1 pl-5">
+      <ul className="list-disc space-y-1.5 pl-5">
         <li>Your email address, used only to sign you in with a one-time code.</li>
         <li>The topics you research, the generated reports, and their cited sources.</li>
         <li>Basic run metadata: status, timestamps, report type and source counts.</li>
@@ -67,13 +67,13 @@ export function Privacy() {
 
 export function Terms() {
   return (
-    <LegalLayout title="Terms">
+    <LegalLayout title="Terms of Service">
       <p>
-        Dossier generates research reports automatically. Use it as a starting point, not as a
+        Citebolt generates research reports automatically. Use it as a starting point, not as a
         substitute for your own judgement.
       </p>
       <h2>Acceptable use</h2>
-      <ul className="list-disc space-y-1 pl-5">
+      <ul className="list-disc space-y-1.5 pl-5">
         <li>Don't use the service to break the law or infringe someone else's rights.</li>
         <li>Don't attempt to overload, scrape or reverse engineer the API.</li>
         <li>Each account is limited to a set number of runs per day.</li>

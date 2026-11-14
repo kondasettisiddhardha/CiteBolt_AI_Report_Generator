@@ -53,6 +53,11 @@ def init_db() -> None:
             connection.execute(text("ALTER TABLE runs ADD COLUMN title VARCHAR(200)"))
         logger.info("Added runs.title column")
 
+    if "word_count" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE runs ADD COLUMN word_count INTEGER DEFAULT 0"))
+        logger.info("Added runs.word_count column")
+
     logger.info("Database ready at %s", ENGINE_URL.split("@")[-1])
 
 

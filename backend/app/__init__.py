@@ -1,1 +1,1 @@
-"""Dossier backend: a three-agent research and report pipeline."""
+"""Citebolt backend: a three-agent research and report pipeline."""

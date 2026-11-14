@@ -212,15 +212,23 @@ export default function RunComposer({
             </div>
 
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
-              <span>PDF text is extracted in your browser; scans fall back to the server.</span>
-              <span className="tabular-nums">
+              <span>PDF and text files are read directly. Scans without text layers cannot be read.</span>
+              <span
+                className={`tabular-nums ${
+                  context.length >= MAX_CONTEXT
+                    ? "font-bold text-red-500 dark:text-red-400"
+                    : context.length >= MAX_CONTEXT * 0.9
+                      ? "font-semibold text-amber-500 dark:text-amber-400"
+                      : "text-muted"
+                }`}
+              >
                 {context.length.toLocaleString()} / {MAX_CONTEXT.toLocaleString()}
               </span>
             </div>
 
             {truncated && (
-              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-                Some text was cut off at the 40,000 character limit.
+              <p className="mt-2 text-xs font-medium text-amber-600 dark:text-amber-400">
+                Some background text was truncated to stay within the 40,000 character limit.
               </p>
             )}
 

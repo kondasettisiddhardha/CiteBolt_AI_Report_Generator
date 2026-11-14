@@ -120,6 +120,330 @@ def _meta_values(
 
 
 # --- PDF --------------------------------------------------------------
+def _md_inline_to_reportlab(text: str) -> str:
+    escaped = html.escape(text or "")
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
+    escaped = re.sub(r"\*(.+?)\*", r"<i>\1</i>", escaped)
+    escaped = re.sub(r"`([^`]+)`", r'<font face="Courier">\1</font>', escaped)
+    escaped = re.sub(
+        r"\[(\d{1,3})\]",
+        r'<super><font color="#0d9488"><b>[\1]</b></font></super>',
+        escaped,
+    )
+    escaped = re.sub(
+        r"\[([^\]]+)\]\((https?://[^)]+)\)",
+        r'<a href="\2" color="#0d9488"><u>\1</u></a>',
+        escaped,
+    )
+    return escaped
+
+
+def _render_pdf_reportlab(
+    title: str,
+    topic: str,
+    report_type: str,
+    summary_md: str,
+    body_md: str,
+    structured: list[dict[str, Any]],
+    meta: dict[str, str],
+) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import (
+        HRFlowable,
+        KeepTogether,
+        PageBreak,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    font_regular = "Helvetica"
+    font_bold = "Helvetica-Bold"
+    try:
+        regular_path = FONTS / "Inter-Regular.ttf"
+        bold_path = FONTS / "Inter-Bold.ttf"
+        if regular_path.is_file() and bold_path.is_file():
+            pdfmetrics.registerFont(TTFont("Inter", str(regular_path)))
+            pdfmetrics.registerFont(TTFont("Inter-Bold", str(bold_path)))
+            font_regular = "Inter"
+            font_bold = "Inter-Bold"
+    except Exception:
+        pass
+
+    buffer = io.BytesIO()
+    margin = 44
+    printable_width = A4[0] - (margin * 2)
+
+    class NumberedCanvas(canvas.Canvas):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._saved_page_states: list[dict[str, Any]] = []
+
+        def showPage(self) -> None:
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self) -> None:
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.saveState()
+                self.setFont(font_regular, 8)
+                self.setFillColor(colors.HexColor("#9ca3af"))
+                self.drawString(margin, 26, "Citebolt — research, distilled")
+                self.drawRightString(A4[0] - margin, 26, f"Page {self._pageNumber} of {num_pages}")
+                self.setStrokeColor(colors.HexColor("#e5e7eb"))
+                self.setLineWidth(0.5)
+                self.line(margin, 36, A4[0] - margin, 36)
+                self.restoreState()
+                super().showPage()
+            super().save()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=margin,
+        rightMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+    )
+
+    eyebrow_style = ParagraphStyle(
+        "Eyebrow",
+        fontName=font_bold,
+        fontSize=8,
+        leading=11,
+        textColor=colors.HexColor("#0d9488"),
+        spaceAfter=4,
+    )
+    title_style = ParagraphStyle(
+        "Title",
+        fontName=font_bold,
+        fontSize=22,
+        leading=26,
+        textColor=colors.HexColor("#111827"),
+        spaceAfter=6,
+    )
+    meta_style = ParagraphStyle(
+        "Meta",
+        fontName=font_regular,
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor("#6b7280"),
+        spaceAfter=14,
+    )
+    summary_title_style = ParagraphStyle(
+        "SummaryTitle",
+        fontName=font_bold,
+        fontSize=12,
+        leading=16,
+        textColor=colors.HexColor("#0f766e"),
+        spaceAfter=6,
+    )
+    summary_p_style = ParagraphStyle(
+        "SummaryBody",
+        fontName=font_regular,
+        fontSize=9.5,
+        leading=14,
+        textColor=colors.HexColor("#1f2937"),
+        spaceAfter=6,
+    )
+    h1_style = ParagraphStyle(
+        "Heading1",
+        fontName=font_bold,
+        fontSize=16,
+        leading=20,
+        textColor=colors.HexColor("#111827"),
+        spaceBefore=14,
+        spaceAfter=6,
+        keepWithNext=True,
+    )
+    h2_style = ParagraphStyle(
+        "Heading2",
+        fontName=font_bold,
+        fontSize=13,
+        leading=17,
+        textColor=colors.HexColor("#111827"),
+        spaceBefore=12,
+        spaceAfter=5,
+        keepWithNext=True,
+    )
+    h3_style = ParagraphStyle(
+        "Heading3",
+        fontName=font_bold,
+        fontSize=11,
+        leading=15,
+        textColor=colors.HexColor("#374151"),
+        spaceBefore=10,
+        spaceAfter=4,
+        keepWithNext=True,
+    )
+    body_style = ParagraphStyle(
+        "Body",
+        fontName=font_regular,
+        fontSize=10,
+        leading=14.5,
+        textColor=colors.HexColor("#1f2937"),
+        spaceAfter=7,
+    )
+    bullet_style = ParagraphStyle(
+        "Bullet",
+        fontName=font_regular,
+        fontSize=10,
+        leading=14.5,
+        textColor=colors.HexColor("#1f2937"),
+        leftIndent=14,
+        firstLineIndent=-10,
+        spaceAfter=4,
+    )
+    source_title_style = ParagraphStyle(
+        "SourceTitle",
+        fontName=font_bold,
+        fontSize=9.5,
+        leading=13,
+        textColor=colors.HexColor("#111827"),
+        spaceAfter=1,
+    )
+    source_url_style = ParagraphStyle(
+        "SourceUrl",
+        fontName=font_regular,
+        fontSize=8,
+        leading=11,
+        textColor=colors.HexColor("#0d9488"),
+        spaceAfter=2,
+    )
+    source_desc_style = ParagraphStyle(
+        "SourceDesc",
+        fontName=font_regular,
+        fontSize=8.5,
+        leading=12,
+        textColor=colors.HexColor("#4b5563"),
+        spaceAfter=6,
+    )
+    table_cell_style = ParagraphStyle(
+        "TableCell",
+        fontName=font_regular,
+        fontSize=8.5,
+        leading=11.5,
+        textColor=colors.HexColor("#1f2937"),
+    )
+    table_cell_bold = ParagraphStyle(
+        "TableCellBold",
+        fontName=font_bold,
+        fontSize=8.5,
+        leading=11.5,
+        textColor=colors.HexColor("#111827"),
+    )
+
+    story: list[Any] = []
+
+    # Header block
+    story.append(Paragraph('<font color="#0f766e"><b>CITE</b></font><font color="#171717"><b>BOLT</b></font> <font color="#8a8a8a"><b>RESEARCH REPORT</b></font>', eyebrow_style))
+    story.append(Paragraph(_md_inline_to_reportlab(title), title_style))
+    meta_line = " &middot; ".join(
+        filter(None, [meta.get("date"), meta.get("report_type"), meta.get("sources_label"), meta.get("topic")])
+    )
+    story.append(Paragraph(meta_line, meta_style))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#e5e7eb"), spaceAfter=14))
+
+    # Executive summary
+    if summary_md:
+        summary_elements: list[Any] = [Paragraph("Executive Summary", summary_title_style)]
+        for p_text in _plain_blocks(summary_md):
+            summary_elements.append(Paragraph(_md_inline_to_reportlab(p_text), summary_p_style))
+        summary_table = Table([[summary_elements]], colWidths=[printable_width])
+        summary_table.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f0fdfa")),
+                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#99f6e4")),
+                ("ROUNDEDCORNERS", [4, 4, 4, 4]),
+                ("TOPPADDING", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            ])
+        )
+        story.append(summary_table)
+        story.append(Spacer(1, 14))
+
+    # Body elements
+    for block in _body_blocks(body_md):
+        kind = block["kind"]
+        text = block.get("text", "")
+        if kind == "table":
+            raw_rows = block.get("rows", [])
+            if raw_rows:
+                num_cols = max(len(r) for r in raw_rows)
+                col_width = printable_width / num_cols if num_cols else printable_width
+                table_data = []
+                for row_idx, r in enumerate(raw_rows):
+                    row_cells = []
+                    style_to_use = table_cell_bold if row_idx == 0 else table_cell_style
+                    for cell in r:
+                        row_cells.append(Paragraph(_md_inline_to_reportlab(cell), style_to_use))
+                    while len(row_cells) < num_cols:
+                        row_cells.append(Paragraph("", style_to_use))
+                    table_data.append(row_cells)
+                t = Table(table_data, colWidths=[col_width] * num_cols)
+                t.setStyle(
+                    TableStyle([
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f8fafc")),
+                        ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#cbd5e1")),
+                        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ])
+                )
+                story.append(Spacer(1, 6))
+                story.append(t)
+                story.append(Spacer(1, 8))
+        elif kind == "h1":
+            story.append(Paragraph(_md_inline_to_reportlab(text), h1_style))
+        elif kind == "h2":
+            story.append(Paragraph(_md_inline_to_reportlab(text), h2_style))
+        elif kind == "h3":
+            story.append(Paragraph(_md_inline_to_reportlab(text), h3_style))
+        elif kind == "bullet":
+            story.append(Paragraph("&bull; " + _md_inline_to_reportlab(text), bullet_style))
+        elif kind == "number":
+            story.append(Paragraph(_md_inline_to_reportlab(text), bullet_style))
+        else:
+            story.append(Paragraph(_md_inline_to_reportlab(text), body_style))
+
+    # Sources section
+    if structured:
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("Sources", h2_style))
+        for s in structured:
+            s_title = _md_inline_to_reportlab(s["title"])
+            s_num = s["number"]
+            s_url = s["url"]
+            s_domain = s.get("domain", "")
+            s_desc = _md_inline_to_reportlab(s.get("description", ""))
+
+            src_header = f"<b>[{s_num}]</b> {s_title}"
+            if s_domain:
+                src_header += f' <font color="#9ca3af">&mdash; {html.escape(s_domain)}</font>'
+            story.append(Paragraph(src_header, source_title_style))
+            if s_url:
+                story.append(Paragraph(f'<a href="{s_url}" color="#0d9488">{html.escape(s_url)}</a>', source_url_style))
+            if s_desc:
+                story.append(Paragraph(s_desc, source_desc_style))
+
+    doc.build(story, canvasmaker=NumberedCanvas)
+    return buffer.getvalue()
+
+
 def markdown_to_pdf(
     markdown: str,
     topic: str = "",
@@ -129,8 +453,6 @@ def markdown_to_pdf(
     report_type: str = "auto",
 ) -> bytes:
     """Render the report to a styled A4 PDF."""
-    from weasyprint import HTML  # imported lazily so the app starts without it
-
     structured = _structured_sources(sources)
     # The stored markdown ends with a Sources list for the app/markdown export;
     # PDF and Word build their own from structured data.
@@ -138,41 +460,63 @@ def markdown_to_pdf(
     summary_md, body_md = _split_summary(clean)
     meta = _meta_values(title or topic, topic, report_type, structured)
 
-    template = Template((TEMPLATES / "report.html").read_text(encoding="utf-8"))
-    document = template.render(
-        **meta,
-        description=f"{meta['title']} — a Dossier research report.",
-        stylesheet=(TEMPLATES / "report.css").as_uri(),
-        summary=_as_html(summary_md, len(structured)) if summary_md else "",
-        body=_as_html(body_md, len(structured)),
-        sources=structured,
-    )
+    use_weasyprint = False
+    try:
+        from weasyprint import HTML  # imported lazily so the app starts without it
+        use_weasyprint = True
+    except (ImportError, OSError):
+        use_weasyprint = False
 
-    buffer = io.BytesIO()
-    HTML(string=document, base_url=str(BASE_DIR)).write_pdf(
-        buffer,
-        presentational_hints=False,
-        metadata_title=meta["title"],
-    )
+    if use_weasyprint:
+        try:
+            template = Template((TEMPLATES / "report.html").read_text(encoding="utf-8"))
+            document = template.render(
+                **meta,
+                description=f"{meta['title']} — a Citebolt research report.",
+                stylesheet=(TEMPLATES / "report.css").as_uri(),
+                summary=_as_html(summary_md, len(structured)) if summary_md else "",
+                body=_as_html(body_md, len(structured)),
+                sources=structured,
+            )
 
-    # WeasyPrint does not write document dates, so set the full metadata here.
-    buffer.seek(0)
-    reader = PdfReader(buffer)
-    writer = PdfWriter()
-    writer.append(reader)
-    writer.add_metadata(
-        {
-            "/Title": meta["title"],
-            "/Author": "Dossier",
-            "/Creator": "Dossier",
-            "/Producer": "Dossier",
-            "/CreationDate": dt.datetime.now().strftime("D:%Y%m%d%H%M%S"),
-            "/ModDate": dt.datetime.now().strftime("D:%Y%m%d%H%M%S"),
-        }
+            buffer = io.BytesIO()
+            HTML(string=document, base_url=str(BASE_DIR)).write_pdf(
+                buffer,
+                presentational_hints=False,
+                metadata_title=meta["title"],
+            )
+
+            # WeasyPrint does not write document dates, so set the full metadata here.
+            buffer.seek(0)
+            reader = PdfReader(buffer)
+            writer = PdfWriter()
+            writer.append(reader)
+            writer.add_metadata(
+                {
+                    "/Title": meta["title"],
+                    "/Author": "Citebolt",
+                    "/Creator": "Citebolt",
+                    "/Producer": "Citebolt",
+                    "/CreationDate": dt.datetime.now().strftime("D:%Y%m%d%H%M%S"),
+                    "/ModDate": dt.datetime.now().strftime("D:%Y%m%d%H%M%S"),
+                }
+            )
+            output = io.BytesIO()
+            writer.write(output)
+            return output.getvalue()
+        except Exception:
+            pass
+
+    # Fallback to pure-Python ReportLab
+    return _render_pdf_reportlab(
+        title=meta["title"],
+        topic=meta["topic"],
+        report_type=meta["report_type"],
+        summary_md=summary_md,
+        body_md=body_md,
+        structured=structured,
+        meta=meta,
     )
-    output = io.BytesIO()
-    writer.write(output)
-    return output.getvalue()
 
 
 # --- Word -------------------------------------------------------------
@@ -218,18 +562,46 @@ def _shade_cell(cell, fill: str) -> None:
     cell._tc.get_or_add_tcPr().append(shading)
 
 
+def _add_page_header(section) -> None:
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, RGBColor
+
+    header = section.header
+    paragraph = header.paragraphs[0]
+    paragraph.text = ""
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    run1 = paragraph.add_run("CITE")
+    run1.bold = True
+    run1.font.size = Pt(8.5)
+    run1.font.color.rgb = RGBColor(0x0F, 0x76, 0x6E)
+
+    run2 = paragraph.add_run("BOLT")
+    run2.bold = True
+    run2.font.size = Pt(8.5)
+    run2.font.color.rgb = RGBColor(0x17, 0x17, 0x17)
+
+
 def _add_page_footer(section, title: str) -> None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
+    from docx.shared import Pt, RGBColor
 
     footer = section.footer
     paragraph = footer.paragraphs[0]
     paragraph.text = ""
     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-    run = paragraph.add_run("Dossier  ·  ")
-    run.font.size = None
+    run1 = paragraph.add_run("CITE")
+    run1.bold = True
+    run1.font.size = Pt(8.5)
+    run1.font.color.rgb = RGBColor(0x0F, 0x76, 0x6E)
+
+    run2 = paragraph.add_run("BOLT  ·  ")
+    run2.bold = True
+    run2.font.size = Pt(8.5)
+    run2.font.color.rgb = RGBColor(0x17, 0x17, 0x17)
 
     field_run = paragraph.add_run()
     begin = OxmlElement("w:fldChar")
@@ -288,10 +660,18 @@ def markdown_to_docx(
 
     # --- title block ---
     eyebrow = document.add_paragraph()
-    eyebrow_run = eyebrow.add_run("DOSSIER RESEARCH REPORT")
-    eyebrow_run.font.size = Pt(8)
-    eyebrow_run.font.bold = True
-    eyebrow_run.font.color.rgb = RGBColor(0x8A, 0x8A, 0x8A)
+    eyebrow_cite = eyebrow.add_run("CITE")
+    eyebrow_cite.font.size = Pt(8)
+    eyebrow_cite.font.bold = True
+    eyebrow_cite.font.color.rgb = RGBColor(0x0F, 0x76, 0x6E)
+    eyebrow_bolt = eyebrow.add_run("BOLT ")
+    eyebrow_bolt.font.size = Pt(8)
+    eyebrow_bolt.font.bold = True
+    eyebrow_bolt.font.color.rgb = RGBColor(0x17, 0x17, 0x17)
+    eyebrow_rest = eyebrow.add_run("RESEARCH REPORT")
+    eyebrow_rest.font.size = Pt(8)
+    eyebrow_rest.font.bold = True
+    eyebrow_rest.font.color.rgb = RGBColor(0x8A, 0x8A, 0x8A)
     eyebrow.paragraph_format.space_after = Pt(2)
 
     heading = document.add_paragraph(style="Heading 1")
@@ -377,7 +757,9 @@ def markdown_to_docx(
                 description_run.font.color.rgb = RGBColor(0x4B, 0x4B, 0x52)
                 description_paragraph.paragraph_format.space_after = Pt(8)
 
+    _add_page_header(section)
     _add_page_footer(section, meta["title"])
+    document.core_properties.author = "Citebolt"
 
     buffer = io.BytesIO()
     document.save(buffer)

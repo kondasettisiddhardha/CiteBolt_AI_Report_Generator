@@ -4,13 +4,15 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import fs from "fs";
 
-const projectRoot = fs.realpathSync(process.cwd());
+const realCwd = fs.realpathSync(process.cwd());
+if (process.cwd() !== realCwd) {
+  process.chdir(realCwd);
+}
 
 export default defineConfig({
-  root: projectRoot,
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: { "@": path.resolve(projectRoot, "src") },
+    alias: { "@": path.resolve(__dirname, "src") },
   },
   server: {
     port: 5173,

@@ -23,16 +23,17 @@ logger = logging.getLogger(__name__)
 # language, short paragraphs, plain-language summaries, and a complete source
 # list at the end.
 WRITING_PROMPT = ChatPromptTemplate.from_template(
-    """You are an expert report writer. Write a clear, professional report for
+    """You are an expert research and report writer. Write a clear, factual, professional report for
 students and early-career professionals. Plain language, short paragraphs, no
-jargon. Do not sound like a textbook.
+jargon.
 
-The user's request was:
+The user's request is:
 
     {topic}
 
-Today's date is {today}. Any pricing information must be introduced with
-"As of {today}," and described as a vendor claim unless a review confirms it.
+Today's date is {today}.
+- For fast-changing topics (tools, prices, benchmarks, models), explicitly include an "As of {today}" line.
+- Any pricing or performance information must be described as a vendor claim unless independently verified.
 
 {report_shape}
 
@@ -46,36 +47,44 @@ Here are the numbered sources. Cite ONLY these numbers and never invent one:
 
 {sources}
 
+Strict Quality and Citation Rules:
+- Consistent wording and the same citation for a claim wherever it appears in the report.
+- Percentages MUST be written without a space (e.g., "30%", never "30 %").
+- Label vendor or single-source figures explicitly (e.g. "Salesforce reported..."). NEVER present vendor or single-source figures as universal general facts in the Executive Summary.
+- Do not turn "a source reviewed N items" into "N items exist".
+- Every citation [n] must point to a source whose fetched text actually contains and supports the claim. Remove or soften any claim not supported by its source.
+- Risk or security claims need an independent non-vendor source; if only vendor sources exist, state so explicitly in the Limitations section.
+- For tool or product topics, always include a Markdown comparison table with the columns:
+  | Tool | Best for | Free tier or price | Main limitation |
+- For tool or product topics, include a "## How to start" section with 3-4 concrete steps tailored for the audience, using only facts found in the sources.
+
 Formatting rules:
 - Use plain ASCII only: a normal hyphen "-", straight quotes, three dots for an
   ellipsis. Never use em dashes, curly quotes or non-breaking spaces.
 - Write a short, clean, descriptive title as the first line, as "# Title". Never
-  repeat the user's request as the title and never start with "Report about".
-- Do not write a Sources section; it is generated from the source data.
+  repeat the user's request as the title and never start with "Report about" or "Make a report".
+- Do not write a Sources or References section; it is generated automatically from the source data.
 
-Structure the Markdown exactly like this:
+Structure the Markdown like this:
 
 # <short descriptive title>
 
 ## Executive Summary
-3-4 sentences on what the report found and why it matters.
+3-4 sentences on what the report found and why it matters. Only well-established, multi-source facts.
 
 ## Key Findings
-5-8 bullets, one idea each. Each bullet that makes a factual claim ends with the
-citation of the source it came from, like [2].
+5-8 bullets, one idea each. Each bullet making a factual claim ends with its source citation, like [1].
 
 ## Detailed Analysis
-2-3 sections with "##" headings, one per theme. Each paragraph is under 5
-sentences. Cite [n] only where that exact source supports the sentence. Do not
-add findings without cited support. When a claim is a vendor's own claim, say so
-("Acme reports...").
+2-3 sections with "##" headings, one per theme. Each paragraph is under 5 sentences.
+Cite [n] only where that exact source supports the sentence.
+If comparing tools/products, include the comparison table here.
 
-If the report compares products, include a Markdown table with the columns
-Tool | Real-time vs post-call | Price | Privacy approach | Languages.
+## How to start
+(For tool/product/process topics) 3-4 actionable steps for the user based strictly on source evidence.
 
 ## Limitations
-2-3 sentences on what the sources could not establish (missing prices, no
-independent testing, stale data).
+2-3 sentences on what the sources could not establish (missing prices, vendor bias, no independent testing, stale data).
 
 ## Conclusion
 3-4 sentences restating the main takeaway.

@@ -55,7 +55,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # --- Auth --------------------------------------------------------------
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-secret-change-me")
-SESSION_COOKIE = "dossier_session"
+SESSION_COOKIE = "citebolt_session"
 SESSION_DAYS = _read_int("SESSION_DAYS", 7)
 OTP_TTL_SECONDS = _read_int("OTP_TTL_SECONDS", 600)
 OTP_MAX_ATTEMPTS = _read_int("OTP_MAX_ATTEMPTS", 5)
@@ -65,14 +65,14 @@ OTP_RESEND_SECONDS = _read_int("OTP_RESEND_SECONDS", 30)
 
 # --- Email -------------------------------------------------------------
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL = os.getenv("FROM_EMAIL", "Dossier <onboarding@resend.dev>")
+FROM_EMAIL = os.getenv("FROM_EMAIL", "Citebolt <onboarding@resend.dev>")
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = _read_int("SMTP_PORT", 587)
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "")
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", CONTACT_EMAIL or "")
-APP_NAME = os.getenv("APP_NAME", "Dossier")
+APP_NAME = os.getenv("APP_NAME", "Citebolt")
 
 # --- Limits ------------------------------------------------------------
 DAILY_RUN_LIMIT = _read_int("DAILY_RUN_LIMIT", 10)

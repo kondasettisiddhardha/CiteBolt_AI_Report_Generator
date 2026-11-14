@@ -5,9 +5,14 @@ export type RunStatus = "queued" | "running" | "completed" | "failed";
 export interface RunItem {
   id: string;
   topic: string;
+  title?: string;
   reportType: string;
   status: RunStatus;
   sourcesCount: number;
+  wordCount?: number;
+  tokenCount?: number;
+  costUsd?: number;
+  elapsedSeconds?: number;
   createdAt: string;
   completedAt: string | null;
   error_message: string | null;
@@ -46,7 +51,22 @@ export function useRuns(options?: RunListOptions) {
           r.ok ? r.json() : []
         );
         if (cancelled) return;
-        setRuns(Array.isArray(data) ? data : []);
+        const rawList = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+        const normalized: RunItem[] = rawList.map((item) => ({
+          id: String(item.id ?? ""),
+          topic: String(item.topic ?? ""),
+          reportType: String(item.reportType ?? item.report_type ?? "auto"),
+          status: (item.status as RunStatus) ?? "queued",
+          sourcesCount: Number(item.sourcesCount ?? item.sources_count ?? 0),
+          wordCount: Number(item.wordCount ?? item.word_count ?? 0),
+          tokenCount: Number(item.tokenCount ?? item.token_count ?? 0),
+          costUsd: Number(item.costUsd ?? item.cost_usd ?? 0),
+          elapsedSeconds: Number(item.elapsedSeconds ?? item.elapsed_seconds ?? 0),
+          createdAt: String(item.createdAt ?? item.created_at ?? new Date().toISOString()),
+          completedAt: item.completedAt ? String(item.completedAt) : item.completed_at ? String(item.completed_at) : null,
+          error_message: item.error_message ? String(item.error_message) : null,
+        }));
+        setRuns(normalized);
         setError(null);
       } catch (err) {
         if (cancelled) return;

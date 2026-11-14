@@ -1,10 +1,11 @@
 export type ThemePreference = "light" | "dark" | "system";
 
-const STORAGE_KEY = "dossier-theme";
+const STORAGE_KEY = "citebolt-theme";
+const LEGACY_STORAGE_KEY = "dossier-theme";
 
 export function getStoredTheme(): ThemePreference {
   if (typeof window === "undefined") return "system";
-  const value = window.localStorage.getItem(STORAGE_KEY);
+  const value = window.localStorage.getItem(STORAGE_KEY) || window.localStorage.getItem(LEGACY_STORAGE_KEY);
   return value === "light" || value === "dark" || value === "system" ? value : "system";
 }
 

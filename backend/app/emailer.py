@@ -68,7 +68,7 @@ def _otp_html(code: str) -> str:
     return f"""\
 <div style="background:#0a0a0a;padding:32px;font-family:Inter,Helvetica,Arial,sans-serif">
   <div style="max-width:480px;margin:0 auto;background:#0f0f10;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:32px;color:#e5e5e5">
-    <p style="margin:0 0 8px;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#8a8a8a">{APP_NAME}</p>
+    <p style="margin:0 0 8px;font-size:14px;letter-spacing:0.12em;text-transform:uppercase;"><span style="color:#14b8a6;font-weight:700;">CITE</span><span style="color:#ffffff;font-weight:700;">BOLT</span></p>
     <h1 style="margin:0 0 16px;font-size:22px;color:#ffffff">Your sign-in code</h1>
     <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#b3b3b3">
       Enter this code to finish signing in. It expires in 10 minutes.
@@ -84,9 +84,9 @@ def _otp_html(code: str) -> str:
 def send_otp_code(email: str, code: str) -> bool:
     return send_email(
         email,
-        f"Your {APP_NAME} sign-in code: {code}",
+        f"Your Citebolt sign-in code: {code}",
         _otp_html(code),
-        text=f"Your {APP_NAME} sign-in code is {code}. It expires in 10 minutes.",
+        text=f"Your Citebolt sign-in code is {code}. It expires in 10 minutes.",
     )
 
 

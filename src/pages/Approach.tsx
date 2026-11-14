@@ -1,5 +1,5 @@
-import { Link, useNavigate } from "react-router";
-import { ArrowRight, FileText, Layers, Search, ShieldCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ArrowRight, FileText, Layers, Search } from "lucide-react";
 import { loginUrl, useRequireAuth } from "@/lib/session";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -36,103 +36,73 @@ export default function Approach() {
   const requireAuth = useRequireAuth();
 
   return (
-    <div className="px-5 py-10 sm:px-10 sm:py-14">
-      <div className="mx-auto max-w-[980px]">
-        <header className="border-b-[1.5px] border-accent pb-8">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
-            Approach
-          </p>
-          <h1 className="mt-4 max-w-[720px] text-[34px] font-bold leading-[1.1] tracking-tight text-fg sm:text-[46px]">
-            Three agents, one rule: nothing gets written that a source cannot back.
-          </h1>
-          <p className="mt-4 max-w-[620px] text-base leading-7 text-muted">
-            Dossier is a small pipeline, not a chat window. Each agent has one job and hands off a
-            verifiable artifact to the next, which is what makes the finished report checkable.
-          </p>
-        </header>
+    <div className="text-left">
+      <header className="border-b border-line pb-8">
+        <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">
+          Architecture
+        </p>
+        <h1 className="mt-2 text-[28px] font-bold leading-tight tracking-tight text-fg sm:text-[34px]">
+          Three agents, one rule: nothing gets written that a source cannot back.
+        </h1>
+        <p className="mt-3 max-w-[640px] text-[16px] sm:text-[17px] leading-relaxed text-muted">
+          Citebolt is a small pipeline, not a chat window. Each agent has one job and hands off a
+          verifiable artifact to the next, which is what makes the finished report checkable.
+        </p>
+      </header>
 
-        <ol className="mt-10 space-y-4">
-          {AGENTS.map(({ step, icon: Icon, name, summary, body, details }) => (
-            <li
-              key={step}
-              className="rounded-2xl border border-line bg-surface p-6 sm:p-7"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-accent-soft text-accent">
-                    <Icon className="h-4 w-4" strokeWidth={1.7} aria-hidden="true" />
+      <ol className="mt-8 space-y-4">
+        {AGENTS.map(({ step, icon: Icon, name, summary, body, details }) => (
+          <li
+            key={step}
+            className="rounded-2xl border border-line bg-surface p-6 sm:p-7 shadow-sm text-left"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                  <Icon className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <span className="text-xs font-semibold tracking-wider text-muted uppercase">
+                    Agent {step}
                   </span>
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
-                      Step {step}
-                    </p>
-                    <h2 className="mt-1 text-xl font-semibold tracking-tight text-fg">{name}</h2>
-                    <p className="mt-1 text-sm font-medium text-fg">{summary}</p>
-                  </div>
+                  <h2 className="text-lg font-bold text-fg">{name}</h2>
                 </div>
               </div>
-
-              <p className="mt-4 max-w-[720px] text-sm leading-7 text-muted">{body}</p>
-
-              <ul className="mt-4 flex flex-wrap gap-2">
-                {details.map((detail) => (
-                  <li
-                    key={detail}
-                    className="rounded-full border border-line bg-bg px-2.5 py-1 text-xs text-muted"
-                  >
-                    {detail}
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ol>
-
-        <section className="mt-10 grid gap-4 sm:grid-cols-[1.4fr_1fr]">
-          <div className="rounded-2xl border border-line bg-surface p-6 sm:p-7">
-            <div className="flex items-center gap-2 text-accent">
-              <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-              <h2 className="text-base font-semibold text-fg">What the pipeline refuses to do</h2>
             </div>
-            <ul className="mt-4 space-y-2 text-sm leading-7 text-muted">
-              <li>· Invent a URL, a statistic or a quotation.</li>
-              <li>· Present a vendor's marketing line as independent evidence.</li>
-              <li>· Hide the gaps — a Limitations section is always written.</li>
-              <li>· Mix up citation numbers: the source list is generated from stored data.</li>
-            </ul>
-          </div>
 
-          <div className="flex flex-col justify-between rounded-2xl border border-line bg-surface p-6 sm:p-7">
-            <div>
-              <h2 className="text-base font-semibold text-fg">Run it on your topic</h2>
-              <p className="mt-2 text-sm leading-6 text-muted">
-                Browsing is open to everyone. An account is only needed to start a run and keep its
-                exports.
-              </p>
-            </div>
-            <div className="mt-5 flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!requireAuth("/runs/new")) return;
-                  navigate("/runs/new");
-                }}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-fg"
-              >
-                Start a research run
-                <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              </button>
-              {!user && (
-                <Link
-                  to={loginUrl()}
-                  className="text-center text-xs text-muted underline underline-offset-2 hover:text-fg"
+            <p className="mt-3 text-sm font-semibold text-fg">{summary}</p>
+            <p className="mt-2 text-sm leading-relaxed text-muted">{body}</p>
+
+            <ul className="mt-4 flex flex-wrap gap-2 border-t border-line/60 pt-4">
+              {details.map((detail) => (
+                <li
+                  key={detail}
+                  className="rounded-full border border-line bg-card px-3 py-1 text-xs font-medium text-muted"
                 >
-                  Sign in instead
-                </Link>
-              )}
-            </div>
-          </div>
-        </section>
+                  {detail}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+
+      <div className="mt-10 rounded-2xl border border-line bg-card p-6 sm:p-8 shadow-sm">
+        <h2 className="text-lg font-bold text-fg">Ready to verify with your own research?</h2>
+        <p className="mt-2 max-w-[560px] text-sm text-muted">
+          Pick a topic you know well and see how the sources stack up against what the model writes.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            if (!requireAuth("/runs/new")) return;
+            navigate("/runs/new");
+          }}
+          className="mt-5 inline-flex h-[42px] items-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-primary-fg shadow-sm transition hover:-translate-y-px"
+        >
+          <span>Start a run</span>
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
     </div>
   );

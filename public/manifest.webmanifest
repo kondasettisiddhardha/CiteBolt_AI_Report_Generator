@@ -1,7 +1,7 @@
 {
-  "name": "Dossier — research, distilled",
-  "short_name": "Dossier",
-  "description": "Dossier turns a topic into a source-cited research report.",
+  "name": "Citebolt — research, distilled",
+  "short_name": "Citebolt",
+  "description": "Citebolt turns a topic into a source-cited research report.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -9,9 +9,15 @@
   "icons": [
     {
       "src": "/logo.svg",
-      "sizes": "any",
+      "sizes": "64x64 192x192 512x512 any",
       "type": "image/svg+xml",
       "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "16x16 32x32 48x48",
+      "type": "image/svg+xml",
+      "purpose": "maskable any"
     }
   ]
 }

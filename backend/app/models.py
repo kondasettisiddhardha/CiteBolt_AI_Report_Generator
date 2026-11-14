@@ -52,6 +52,7 @@ class Run(Base):
     report_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     sources_count: Mapped[int] = mapped_column(Integer, default=0)
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[float] = mapped_column(Numeric(12, 6), default=0.0)
     elapsed_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)

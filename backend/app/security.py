@@ -88,7 +88,7 @@ def generate_otp() -> str:
 def _user_from_request(request: Request, db: Session) -> User | None:
     from app.config import SESSION_COOKIE
 
-    token = request.cookies.get(SESSION_COOKIE)
+    token = request.cookies.get(SESSION_COOKIE) or request.cookies.get("dossier_session")
     if not token:
         header = request.headers.get("authorization", "")
         if header.lower().startswith("bearer "):

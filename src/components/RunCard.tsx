@@ -5,8 +5,23 @@ import type { RunItem } from "@/hooks/useRuns";
 import { exportUrl } from "@/lib/api";
 import StatusBadge from "./StatusBadge";
 
+function formatSafeDistance(dateVal?: string | null): string {
+  if (!dateVal) return "recently";
+  try {
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) return "recently";
+    return formatDistanceToNow(d, { addSuffix: true });
+  } catch {
+    return "recently";
+  }
+}
+
 export default function RunCard({ run, onDelete }: { run: RunItem; onDelete?: (run: RunItem) => void }) {
-  const finishedAt = run.completedAt ?? run.createdAt;
+  const anyRun = run as unknown as Record<string, unknown>;
+  const createdAt = run.createdAt || (anyRun.created_at as string) || new Date().toISOString();
+  const completedAt = run.completedAt || (anyRun.completed_at as string) || null;
+  const finishedAt = completedAt || createdAt;
+  const sourcesCount = run.sourcesCount ?? (anyRun.sources_count as number) ?? 0;
 
   return (
     <article className="flex flex-col gap-4 rounded-xl border border-line bg-card p-4 transition-colors hover:border-line-strong sm:flex-row sm:items-start sm:justify-between sm:p-5">
@@ -17,21 +32,21 @@ export default function RunCard({ run, onDelete }: { run: RunItem; onDelete?: (r
             ·
           </span>
           <time className="text-sm text-muted" dateTime={finishedAt}>
-            {formatDistanceToNow(new Date(finishedAt), { addSuffix: true })}
+            {formatSafeDistance(finishedAt)}
           </time>
         </div>
 
         <h3 className="mt-2 truncate text-xl font-semibold tracking-tight text-fg">{run.topic}</h3>
-        <p className="mt-1 truncate text-sm text-muted">{run.sourcesCount} cited sources</p>
+        <p className="mt-1 truncate text-sm text-muted">{sourcesCount} cited sources</p>
 
         <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted">
           <span className="inline-flex items-center gap-1.5">
             <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-            {formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })}
+            {formatSafeDistance(createdAt)}
           </span>
           <span className="inline-flex items-center gap-1.5">
             <Rss className="h-3.5 w-3.5" aria-hidden="true" />
-            {run.sourcesCount} sources
+            {sourcesCount} sources
           </span>
         </div>
       </div>
@@ -47,7 +62,7 @@ export default function RunCard({ run, onDelete }: { run: RunItem; onDelete?: (r
           </a>
         )}
         <Link
-          to={`/runs/${run.id}`}
+          to={run.status === "completed" ? `/reports/${run.id}` : `/runs/${run.id}`}
           className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-fg"
         >
           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />

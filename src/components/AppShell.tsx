@@ -1,30 +1,32 @@
-import type { ReactNode } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import Sidebar from "@/components/Sidebar";
 
-const HOME_PATH = ["/", "/workspace"];
+const NO_BACK_PATHS = ["/", "/workspace"];
 
 export default function AppShell() {
   const location = useLocation();
-  const isHome = HOME_PATH.includes(location.pathname);
+  const navigate = useNavigate();
+  const showBack = !NO_BACK_PATHS.includes(location.pathname);
 
   return (
     <div className="flex min-h-screen bg-[var(--bg)] text-[var(--fg)]">
       <Sidebar />
-      <main className="min-w-0 flex-1">
-        {isHome ? (
-          <div className="page-container">
-            <Outlet />
-          </div>
-        ) : (
-          <div className="page-container">
-            <nav className="mx-auto flex h-12 items-center gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-1 text-xs font-medium text-[var(--muted)]">
-              <span className="text-base">←</span>
+      <main className="min-w-0 flex-1 pt-14 lg:pt-0">
+        <div className="page-container mx-auto w-full max-w-[1040px] px-4 py-6 sm:px-8 sm:py-8">
+          {showBack && (
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="group mb-5 inline-flex items-center gap-2 text-[14px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--fg)]"
+              aria-label="Go back"
+            >
+              <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
               <span>Back</span>
-            </nav>
-            <Outlet />
-          </div>
-        )}
+            </button>
+          )}
+          <Outlet />
+        </div>
       </main>
     </div>
   );

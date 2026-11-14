@@ -86,12 +86,19 @@ export default function Settings() {
   }
 
   return (
-    <div className="px-5 py-8 sm:px-10">
-      <div className="mx-auto max-w-[820px]">
-        <h1 className="text-2xl font-bold tracking-tight text-fg sm:text-[32px]">Settings</h1>
-        <p className="mt-2 text-sm text-muted">
-          Appearance, account and the defaults each new run starts with.
-        </p>
+    <div className="text-left">
+      <div>
+        <header className="mb-6">
+          <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">
+            Preferences
+          </p>
+          <h1 className="mt-2 text-[28px] font-bold tracking-tight text-fg sm:text-[34px]">
+            Settings
+          </h1>
+          <p className="mt-2 max-w-[640px] text-[16px] sm:text-[17px] leading-relaxed text-muted">
+            Appearance, account and the defaults each new run starts with.
+          </p>
+        </header>
 
         <section className="mt-6 rounded-2xl border border-line bg-surface p-6">
           <h2 className="text-base font-semibold text-fg">Appearance</h2>
@@ -127,14 +134,14 @@ export default function Settings() {
             <button
               type="button"
               onClick={signOut}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent-soft"
+              className="inline-flex h-10 items-center rounded-lg border border-line bg-card px-4 text-sm font-medium text-fg transition-colors hover:bg-accent-soft hover:border-line-strong"
             >
               Log out
             </button>
             <button
               type="button"
               onClick={deleteAll}
-              className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
+              className="inline-flex h-10 items-center rounded-lg border border-red-200 bg-card px-4 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
             >
               Delete all my runs
             </button>

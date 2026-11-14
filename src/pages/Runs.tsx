@@ -46,14 +46,14 @@ export default function Runs() {
   }
 
   return (
-    <div className="px-5 py-8 sm:px-10">
-      <div className="mx-auto max-w-[1000px]">
-        <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+    <div className="text-left">
+      <div>
+        <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-[13px] font-medium uppercase tracking-[0.22em] text-muted">
+            <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">
               Recent runs
             </p>
-            <h1 className="mt-2 text-2xl font-bold tracking-tight text-fg sm:text-[32px]">
+            <h1 className="mt-2 text-[28px] font-bold tracking-tight text-fg sm:text-[34px]">
               Every report you've made.
             </h1>
           </div>
@@ -64,7 +64,7 @@ export default function Runs() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search runs"
-              className="h-10 w-64 rounded-lg border border-line bg-surface pl-9 pr-3 text-sm text-fg placeholder:text-muted focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-ring"
+              className="h-10 w-64 rounded-lg border border-line bg-surface pl-9 pr-3 text-sm text-fg placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring dark:border-white/20"
             />
           </label>
         </header>
