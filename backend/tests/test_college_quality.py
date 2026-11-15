@@ -640,6 +640,71 @@ This chapter introduces the engineering background and system motivation.
         self.assertTrue(response.body.startswith(b"%PDF"))
         self.assertGreater(len(response.body), 1000)
 
+    def test_placeholder_warning_threshold_and_status(self):
+        """Verify that when >10% of sections end up as placeholders, run is marked 'completed_with_warnings'."""
+        topic = "Distributed Systems Reliability"
+        outline = [
+            {"level": 1, "title": "Title page", "is_auto": True},
+            {"level": 1, "title": "Certificate", "is_auto": True},
+            {"level": 1, "title": "Abstract", "target_words": 200},
+            {"level": 1, "title": "Chapter 1 Overview"},
+            {"level": 2, "title": "1.1 Background", "target_words": 100},
+            {"level": 2, "title": "1.2 System Goals", "target_words": 100},
+            {"level": 1, "title": "Chapter 2 Architecture"},
+            {"level": 2, "title": "2.1 Core Services", "target_words": 100},
+            {"level": 2, "title": "2.2 State Flow", "target_words": 100},
+            {"level": 1, "title": "Chapter 3 Evaluation"},
+            {"level": 2, "title": "3.1 Test Suite", "target_words": 100},
+            {"level": 2, "title": "3.2 Measurements", "target_words": 100},
+            {"level": 1, "title": "References", "is_auto": True},
+        ]
+
+        emitted_events = []
+        def mock_emit(evt):
+            emitted_events.append(evt)
+
+        def mock_generate(prompt, *args, **kwargs):
+            if any(k in prompt for k in ["Core Services", "State Flow", "Test Suite", "Measurements"]):
+                return "", {"input_tokens": 200, "output_tokens": 200, "finish_reason": "length"}
+            return "Valid section prose describing technical architecture and implementation.", {
+                "input_tokens": 100,
+                "output_tokens": 100,
+                "finish_reason": "stop",
+            }
+
+        state = {
+            "topic": topic,
+            "context": "FastAPI and SQLite backend services.",
+            "report_type": "college",
+            "outline": outline,
+            "front_matter": {"projectTitle": "Distributed Systems"},
+        }
+
+        with patch.object(section_engine, "generate_text", side_effect=mock_generate), \
+             patch.object(section_engine, "_collect_sources", return_value=[]):
+            final_state = section_engine.run_section_pipeline(state, emit=mock_emit, is_cancelled=lambda: False)
+
+        # 1. Status marked as completed_with_warnings
+        self.assertEqual(final_state.get("status"), "completed_with_warnings")
+        self.assertTrue(final_state.get("has_warnings"))
+
+        # 2. Warning details present
+        details = final_state.get("warning_details", {})
+        self.assertGreater(details.get("placeholder_count", 0), 0)
+        self.assertGreater(len(details.get("placeholder_sections", [])), 0)
+
+        # 3. Fallback text format: '[Add your <title> here.]', never '[Add your technical details...]'
+        rep = final_state.get("report", "")
+        self.assertNotIn("Add your technical details and implementation specifications", rep)
+        self.assertIn("[Add your Core Services here.]", rep)
+        self.assertIn("[Add your State Flow here.]", rep)
+
+        # 4. Fallback events emitted with reason
+        fallback_events = [e for e in emitted_events if e.get("type") == "section_fallback"]
+        self.assertGreaterEqual(len(fallback_events), 4)
+        for fb in fallback_events:
+            self.assertIn("empty_llm_output", fb.get("reason", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

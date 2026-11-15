@@ -77,7 +77,7 @@ def clean_title(raw: str, fallback_topic: str = "") -> str:
         value = " ".join(
             word.capitalize() if word.islower() else word for word in value.split()
         )
-    return value
+    return value.rstrip(".")
 
 
 def strip_heading_numbering(markdown: str) -> str:
@@ -95,13 +95,16 @@ def prepare_report(
     report_markdown: str,
     sources: list[dict[str, Any]] | None = None,
     topic: str = "",
+    report_type: str = "auto",
 ) -> tuple[str, str]:
     normalized = normalize_text(report_markdown or "")
     if not normalized:
         title = clean_title("", fallback_topic=topic)
         return title, ""
 
-    normalized = strip_heading_numbering(normalized)
+    is_template = (report_type in ("college", "template")) or ("college" in (topic or "").lower())
+    if not is_template:
+        normalized = strip_heading_numbering(normalized)
 
     lines = normalized.splitlines()
     raw_title = ""

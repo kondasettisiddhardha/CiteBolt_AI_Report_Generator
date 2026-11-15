@@ -58,7 +58,7 @@ export default function RunCard({ run, onDelete }: { run: RunItem; onDelete?: (r
       </div>
 
       <div className="order-2 flex items-center gap-2 sm:shrink-0">
-        {run.status === "completed" && (
+        {(run.status === "completed" || run.status === "completed_with_warnings") && (
           <a
             href={exportUrl(run.id, "md")}
             className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-fg"
@@ -68,7 +68,7 @@ export default function RunCard({ run, onDelete }: { run: RunItem; onDelete?: (r
           </a>
         )}
         <Link
-          to={run.status === "completed" ? `/reports/${run.id}` : `/runs/${run.id}`}
+          to={(run.status === "completed" || run.status === "completed_with_warnings") ? `/reports/${run.id}` : `/runs/${run.id}`}
           className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-fg"
         >
           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />

@@ -272,7 +272,7 @@ def start_research(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    topic = str(payload.get("topic") or "").strip()
+    topic = str(payload.get("topic") or "").strip().rstrip(".").rstrip(".")
     if not topic:
         raise HTTPException(status_code=400, detail="Enter a topic to research.")
     if len(topic) > MAX_TOPIC_CHARS:
@@ -385,7 +385,7 @@ def _run_finalise(run_id: str, state: dict[str, Any], cancelled: bool) -> None:
         elif state.get("report"):
             sources = state.get("sources", [])
             report_title, clean_markdown = prepare_report(
-                str(state["report"]), sources, row.topic
+                str(state["report"]), sources, row.topic, report_type=row.report_type
             )
             # Keep every display value computed once per run by the backend.
             cleaned_sources = _normalise_sources_list(sources)
@@ -395,7 +395,13 @@ def _run_finalise(run_id: str, state: dict[str, Any], cancelled: bool) -> None:
             body_for_word_count = strip_sources_section(
                 strip_leading_title(renumbered_markdown)
             )
-            row.status = "completed"
+            if state.get("status") == "completed_with_warnings" or state.get("has_warnings"):
+                row.status = "completed_with_warnings"
+                warning_info = state.get("warning_details") or {}
+                row.error_message = json.dumps(warning_info, ensure_ascii=False) if isinstance(warning_info, dict) else str(state.get("warning_message") or "")
+            else:
+                row.status = "completed"
+                row.error_message = None
             row.title = report_title
             row.report_markdown = renumbered_markdown
             row.sources_json = json.dumps(final_sources, ensure_ascii=False)
@@ -490,7 +496,7 @@ def rename_run(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    topic = str(payload.get("topic") or "").strip()
+    topic = str(payload.get("topic") or "").strip().rstrip(".")
     if not topic or len(topic) > MAX_TOPIC_CHARS:
         raise HTTPException(status_code=400, detail="Give the run a title under 300 characters.")
     run = _owned_run(run_id, user, db)

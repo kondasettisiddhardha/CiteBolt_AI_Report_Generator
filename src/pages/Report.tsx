@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { format } from "date-fns";
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   Copy,
@@ -233,6 +234,30 @@ export default function Report() {
     return countWords(run?.report_markdown ?? "");
   }, [run?.word_count, run?.report_markdown]);
 
+  const warningDetails = useMemo(() => {
+    if (run?.status !== "completed_with_warnings") return null;
+    try {
+      if (run?.error_message?.startsWith("{")) {
+        return JSON.parse(run.error_message) as {
+          warning?: string;
+          placeholder_count?: number;
+          total_sections?: number;
+          count?: number;
+          placeholder_sections?: string[];
+          sections?: string[];
+        };
+      }
+    } catch {
+      // not json
+    }
+    return {
+      warning: run?.error_message || "Some sections could not be generated and require manual input.",
+      placeholder_count: 0,
+      total_sections: 0,
+      placeholder_sections: [] as string[],
+    };
+  }, [run?.status, run?.error_message]);
+
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -352,6 +377,30 @@ export default function Report() {
               {copiedBody ? "Copied" : "Copy"}
             </button>
           </div>
+
+          {/* Warning banner if completed with warnings */}
+          {warningDetails && (
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50/90 p-4 text-amber-950 shadow-sm dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-sm font-semibold">
+                    Completed with warnings: {warningDetails.placeholder_count || warningDetails.count || "Several"} sections are placeholders
+                  </h4>
+                  <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-300/90">
+                    The following sections could not be fully drafted by the model and contain placeholder notes (e.g. <code>[Add your ... here.]</code>):
+                  </p>
+                  {((warningDetails.placeholder_sections || warningDetails.sections)?.length ?? 0) > 0 && (
+                    <ul className="mt-2.5 max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-xs text-amber-950 dark:text-amber-200">
+                      {(warningDetails.placeholder_sections || warningDetails.sections)!.map((sec, i) => (
+                        <li key={i} className="font-medium">{sec}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* CONTENTS card: ONE column in document order built from H2 headings with H3 nested and numbered */}
           {headings.length > 0 && (

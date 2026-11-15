@@ -189,14 +189,14 @@ export default function RunProgress() {
               if (event.node === "writing" && event.status === "done") {
                 setTimeout(async () => {
                   const data = await loadRun();
-                  if (data?.status === "completed") {
+                  if (data?.status === "completed" || data?.status === "completed_with_warnings") {
                     navigate(`/reports/${id}`, { replace: true });
                   }
                 }, 500);
               }
             } else if (event.type === "report" || event.type === "complete" || event.type === "end") {
               const data = await loadRun();
-              if (data?.status === "completed") {
+              if (data?.status === "completed" || data?.status === "completed_with_warnings") {
                 navigate(`/reports/${id}`, { replace: true });
               }
             } else if (event.type === "error") {
@@ -207,13 +207,13 @@ export default function RunProgress() {
         }
         // Stream finished
         const finalData = await loadRun();
-        if (finalData?.status === "completed") {
+        if (finalData?.status === "completed" || finalData?.status === "completed_with_warnings") {
           navigate(`/reports/${id}`, { replace: true });
         }
       } catch (error) {
         if (!controller.signal.aborted) {
           const finalData = await loadRun();
-          if (finalData?.status === "completed") {
+          if (finalData?.status === "completed" || finalData?.status === "completed_with_warnings") {
             navigate(`/reports/${id}`, { replace: true });
           }
         }
@@ -225,7 +225,7 @@ export default function RunProgress() {
     // Foolproof polling fallback while running
     const pollTimer = setInterval(async () => {
       const updated = await loadRun();
-      if (updated?.status === "completed") {
+      if (updated?.status === "completed" || updated?.status === "completed_with_warnings") {
         navigate(`/reports/${id}`, { replace: true });
       }
     }, 2000);

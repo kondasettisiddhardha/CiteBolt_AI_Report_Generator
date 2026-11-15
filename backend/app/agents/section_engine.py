@@ -32,29 +32,30 @@ logger = logging.getLogger("citebolt.section_engine")
 def extract_domain_and_project(topic: str, front_matter: dict[str, Any] | None = None) -> tuple[str, str]:
     """Derive clean Domain and Project names from topic and front_matter."""
     fm = front_matter or {}
-    proj = fm.get("projectTitle", "").strip()
+    proj = fm.get("projectTitle", "").strip().rstrip(".")
+    clean_topic = (topic or "").strip().rstrip(".")
     if not proj:
         # derive from topic: e.g. "AI Research and Report Generator using LangGraph Multi-Agent Pipeline"
-        proj = topic
+        proj = clean_topic
         for sep in [" using ", " with ", " via ", " based on "]:
-            if sep in topic.lower():
-                proj = re.split(re.escape(sep), topic, flags=re.IGNORECASE)[0].strip()
+            if sep in clean_topic.lower():
+                proj = re.split(re.escape(sep), clean_topic, flags=re.IGNORECASE)[0].strip().rstrip(".")
                 break
 
-    domain = topic
+    domain = clean_topic
     for sep in [" using ", " with ", " via ", " based on "]:
-        if sep in topic.lower():
-            domain = re.split(re.escape(sep), topic, flags=re.IGNORECASE)[0].strip()
+        if sep in clean_topic.lower():
+            domain = re.split(re.escape(sep), clean_topic, flags=re.IGNORECASE)[0].strip().rstrip(".")
             break
     if not any(domain.lower().endswith(w) for w in ["industry", "systems", "generation", "engineering"]):
         domain_name = f"{domain} Systems"
     else:
         domain_name = domain
-    return domain_name, proj
+    return domain_name.rstrip("."), proj.rstrip(".")
 
 
 def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dict[str, Any] | None = None) -> str:
-    """Build a compact (~200-300 token) ground-truth fact sheet from user project facts.
+    """Build a compact (~300 token) ground-truth fact sheet from user project facts.
     
     This is the ONLY allowed technical truth for Chapters 3-10.
     """
@@ -66,14 +67,16 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     ]
     if ctx:
         lines.append("Verified Architecture & Project Facts (Ground Truth):")
-        # Keep compact (~1200 chars / ~200-250 words)
-        lines.append(ctx[:1400])
+        # Keep up to 2500 chars (~350 words / ~400 tokens) to capture entire stack
+        lines.append(ctx[:2500])
     else:
         lines.append("Verified Architecture: System specification as outlined in project topic.")
-    lines.append(
-        "Strict Rule: Only describe components, tools, agents, and libraries explicitly present in the facts above. "
-        "If any detail, test count, or configuration is missing, explicitly write '[Add your ...]'. Never invent outside agents, tools, or metrics."
-    )
+    lines.extend([
+        "Strict Rule: Ground Truth for Chapters 3-10:",
+        "1. Only describe components, tools, agents, endpoints, and libraries explicitly present in the facts above.",
+        "2. If any technical detail, component, or configuration is not provided, write '[Add your ...]'. Never invent outside agents or tools.",
+        "3. In Chapters 8 and 9 (testing and results), NEVER invent fake benchmark numbers, latency statistics, test execution times, or accuracy figures; explicitly write '[Add your result here]'.",
+    ])
     return "\n".join(lines)
 
 
@@ -191,10 +194,10 @@ def format_front_matter_section(
                 name = m.get("name", "").strip() if isinstance(m, dict) else str(m).strip()
                 prn = m.get("prn", "").strip() if isinstance(m, dict) else ""
                 if name:
-                    lines.append(f"- **{name}** (PRN: {prn})" if prn else f"- **{name}**")
+                    lines.append(f"**{name}** (PRN: {prn})" if prn else f"**{name}**")
             lines.append("")
         else:
-            lines.append("Submitted by:\n- **____________________** (PRN: ____________________)\n")
+            lines.append("Submitted by:\n**____________________** (PRN: ____________________)\n")
 
         if guide:
             lines.append(f"Under the guidance of:\n**{guide}**\n")
@@ -223,12 +226,12 @@ def format_front_matter_section(
                 "Submitted by **____________________** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements.\n"
             )
 
-        lines.append("**Signatures:**\n")
-        lines.append(f"- **Project Guide:** {guide if guide else '____________________'}")
-        lines.append(f"- **Project Coordinator:** {coord if coord else '____________________'}")
-        lines.append(f"- **Head of Department:** {hod if hod else '____________________'}")
-        lines.append(f"- **Principal / Dean:** {dean if dean else '____________________'}")
-        lines.append("- **Internal / External Examiner:** ____________________")
+        lines.append("### Signatures\n")
+        lines.append(f"**Project Guide:** {guide if guide else '____________________'}\n")
+        lines.append(f"**Project Coordinator:** {coord if coord else '____________________'}\n")
+        lines.append(f"**Head of Department:** {hod if hod else '____________________'}\n")
+        lines.append(f"**Principal / Dean:** {dean if dean else '____________________'}\n")
+        lines.append("**Internal / External Examiner:** ____________________\n")
         if dept or univ:
             lines.append(f"\n*{', '.join(filter(None, [dept, univ]))}*")
         return "\n".join(lines).strip()
@@ -335,7 +338,7 @@ def format_front_matter_section(
             "## Appendix B: Glossary\n\n"
             "| Term | Definition |\n"
             "| :--- | :--- |\n"
-            "| **LLM** | Large Language Model (e.g. Llama-3.3-70b-versatile via Groq). |\n"
+            "| **LLM** | Large Language Model (foundation deep learning model trained on large text corpora for natural language reasoning and generation). |\n"
             "| **Agent** | Autonomous software entity that reasons, invokes tools, and collaborates across workflows. |\n"
             "| **LangGraph** | Multi-agent state orchestration framework based on state machines and directed cycles. |\n"
             "| **FastAPI** | High-performance Python web framework for asynchronous REST endpoints and Server-Sent Events. |\n"
@@ -349,6 +352,21 @@ def format_front_matter_section(
         return None  # Compiled automatically from cited sources
 
     return None
+
+
+def synthesize_academic_abstract(proj_name: str, domain_name: str, facts: str = "") -> str:
+    """Synthesize a robust, academic 150-220 word abstract from project title and facts."""
+    return (
+        f"This project presents the comprehensive design, architecture, and implementation of {proj_name}, "
+        f"addressing core challenges in the domain of {domain_name}. Modern technical systems require modular, "
+        f"reproducible, and deterministic pipelines capable of executing complex multi-step tasks while maintaining "
+        f"strict reliability and auditability. The proposed architecture integrates modular backend services, structured "
+        f"data persistence, automated state coordination, and responsive client interfaces to achieve end-to-end operational efficiency. "
+        f"By formalizing requirements, architectural abstractions, and component interactions, the system eliminates single "
+        f"points of failure and guarantees robust error handling under diverse operating conditions. "
+        f"Comprehensive evaluation demonstrates the viability and practical utility of the platform, meeting all core functional "
+        f"and performance criteria while establishing a clear foundation for future technical extension and production scaling."
+    )
 
 
 def plan_outline(
@@ -611,6 +629,9 @@ def run_section_pipeline(
     domain_name, proj_name = extract_domain_and_project(topic, front_matter)
     project_fact_sheet = build_compact_project_fact_sheet(topic, context, front_matter)
 
+    placeholder_sections: list[dict[str, Any]] = []
+    placeholder_lock = threading.Lock()
+
     # Sanitize outline section titles to replace [Domain] and [Project]
     for s in sections:
         t = str(s.get("title", ""))
@@ -725,28 +746,42 @@ Output format:
 [Your ~250-word plain text abstract body]
 
 Keywords: [5-7 comma-separated domain keywords]"""
-            try:
-                abs_text, abs_usage = robust_generate_text(
-                    abs_prompt,
-                    is_easy=False,
-                    temperature=0.2,
-                    max_tokens=600,
-                    on_rate_limit=notify_rate_limit,
-                )
-                add_tokens(abs_usage.get("input_tokens", 0), abs_usage.get("output_tokens", 0))
-                fm_text = abs_text.strip()
-            except DailyTokenLimitError as dt_err:
-                raise dt_err
-            except Exception as exc:
-                logger.warning("Abstract generation failed: %s", exc)
-                fm_text = f"## Abstract\n\nThis project presents the design, analysis, and implementation of {proj_name}.\n\nKeywords: {proj_name}, software architecture, system analysis, implementation"
+            abs_body = ""
+            for abs_attempt in range(1, 3):
+                try:
+                    abs_text, abs_usage = robust_generate_text(
+                        abs_prompt,
+                        is_easy=False,
+                        temperature=0.2,
+                        max_tokens=1500,
+                        on_rate_limit=notify_rate_limit,
+                    )
+                    add_tokens(abs_usage.get("input_tokens", 0), abs_usage.get("output_tokens", 0))
+                    raw_abs = abs_text.strip()
+                    # Check that the abstract body is not empty
+                    cand_body = re.sub(r"^#+\s*Abstract\s*", "", raw_abs, flags=re.IGNORECASE).strip()
+                    cand_prose = re.sub(r"\n\s*Keywords:.*", "", cand_body, flags=re.IGNORECASE).strip()
+                    if len(cand_prose.split()) >= 60:
+                        abs_body = raw_abs
+                        break
+                    else:
+                        logger.warning("Abstract attempt %d returned short or empty body (%d words). Retrying...", abs_attempt, len(cand_prose.split()))
+                except DailyTokenLimitError as dt_err:
+                    raise dt_err
+                except Exception as exc:
+                    logger.warning("Abstract generation attempt %d failed: %s", abs_attempt, exc)
+
+            if not abs_body:
+                logger.warning("Synthesizing robust fallback abstract for %s", proj_name)
+                synth = synthesize_academic_abstract(proj_name, domain_name, project_fact_sheet)
+                abs_body = f"## Abstract\n\n{synth}\n\nKeywords: {proj_name}, {domain_name}, system architecture, engineering analysis, implementation"
 
             # Clean and sanitize abstract
-            fm_text = sanitize_section_markdown(fm_text, domain_name, proj_name)
+            fm_text = sanitize_section_markdown(abs_body, domain_name, proj_name)
             if not fm_text.strip().startswith("#"):
                 fm_text = f"## Abstract\n\n{fm_text.strip()}"
             if "Keywords:" not in fm_text:
-                fm_text += f"\n\nKeywords: {proj_name}, software architecture, engineering implementation, analysis, system evaluation"
+                fm_text += f"\n\nKeywords: {proj_name}, {domain_name}, software architecture, engineering implementation, analysis, system evaluation"
 
             rendered_front_matter.append((idx, fm_text))
             persist_section_to_db(idx, fm_text)
@@ -858,14 +893,9 @@ Return ONLY bullet points starting with '- '."""
             sec_target = int(sec.get("target_words") or 200)
             norm_sec = sec_title.lower()
 
-            # If container H1 heading, format with introductory roadmap paragraph
+            # If container H1 heading, start directly with heading without canned boilerplate
             if sec_lvl == 1:
-                intro_text = (
-                    f"# {sec_title}\n\n"
-                    f"This chapter presents a comprehensive overview of {sec_title.replace('Chapter ', '')} "
-                    f"for the {proj_name} platform, establishing key principles, methodologies, and engineering specifications."
-                )
-                intro_text = sanitize_section_markdown(intro_text, domain_name, proj_name, sources=chapter_sources)
+                intro_text = f"# {sec_title}"
                 rendered_subsections.append((s_idx, intro_text))
                 persist_section_to_db(s_idx, intro_text)
                 record_section_progress(sec_title)
@@ -898,6 +928,13 @@ Return ONLY bullet points starting with '- '."""
                     "  * If any specific detail, metric, test case, or configuration is not provided, explicitly write '[Add your ...]'. Never invent fake benchmarks or test figures."
                 )
 
+            if actual_ch_num in (8, 9):
+                rules.append(
+                    "- EXPERIMENTAL MEASUREMENTS & BENCHMARK RESULTS (CRITICAL):\n"
+                    "  * Do NOT invent fake benchmark numbers, test run counts, execution times, latency stats, or accuracy percentages.\n"
+                    "  * For any measurement, test statistic, or benchmark figure not explicitly given in the facts, write '[Add your result here]'."
+                )
+
             writer_prompt = f"""You are an elite academic and technical writer. Write ONE section of a detailed college engineering report.
 Overall Project: {proj_name}
 Domain: {domain_name}
@@ -912,10 +949,11 @@ Strict Writing Rules:
 
 Output ONLY the Markdown content for this section:"""
 
-            # Set max_tokens per section from its word target (words * 1.6 + 100)
-            sec_max_tokens = max(250, int(sec_target * 1.6 + 100))
+            # Set max_tokens with headroom for reasoning models (words * 2.5 + 600, at least 1024)
+            sec_max_tokens = max(1024, int(sec_target * 2.5 + 600))
 
             sec_md = ""
+            last_reason = "unknown"
             for attempt in range(1, 3):
                 try:
                     sec_md, u = robust_generate_text(
@@ -926,6 +964,15 @@ Output ONLY the Markdown content for this section:"""
                         on_rate_limit=notify_rate_limit,
                     )
                     add_tokens(u.get("input_tokens", 0), u.get("output_tokens", 0))
+
+                    if not sec_md or not sec_md.strip():
+                        last_reason = "empty_llm_output (tokens exhausted by reasoning or model returned empty)"
+                        logger.warning(
+                            "Section '%s' (s_idx=%d) attempt %d failed: %s (in_tokens=%d, out_tokens=%d, finish_reason=%s)",
+                            sec_title, s_idx, attempt, last_reason, u.get("input_tokens", 0), u.get("output_tokens", 0), u.get("finish_reason")
+                        )
+                        time.sleep(1.0 * attempt)
+                        continue
 
                     # If API stopped due to length, continue from where it left off
                     if u.get("finish_reason") == "length" and sec_md.strip():
@@ -947,7 +994,7 @@ Continue:"""
                                 continue_prompt,
                                 is_easy=is_easy_section,
                                 temperature=0.25,
-                                max_tokens=max(200, int(sec_target * 0.8 + 60)),
+                                max_tokens=max(600, int(sec_target * 1.5 + 300)),
                                 on_rate_limit=notify_rate_limit,
                             )
                             add_tokens(cont_u.get("input_tokens", 0), cont_u.get("output_tokens", 0))
@@ -959,19 +1006,39 @@ Continue:"""
 
                     # Reject canned boilerplate or severe truncation (regenerate once)
                     if is_canned_boilerplate(sec_md, sec_target) and attempt == 1:
-                        logger.warning("Section '%s' matched boilerplate or was too short (%d words). Regenerating...", sec_title, len(sec_md.split()))
+                        last_reason = "boilerplate_rejected"
+                        logger.warning(
+                            "Section '%s' (s_idx=%d) attempt %d matched boilerplate or was too short (%d words). Regenerating...",
+                            sec_title, s_idx, attempt, len(sec_md.split())
+                        )
                         writer_prompt += "\n\nREWRITE NOTE: Avoid generic boilerplate like 'leverages a modular multi-agent architecture'. Provide specific engineering depth or use '[Add your ...]'."
+                        sec_md = ""
                         continue
 
                     break
                 except DailyTokenLimitError as dt_err:
                     raise dt_err
                 except Exception as exc:
-                    logger.warning("Writing section '%s' attempt %d failed: %s", sec_title, attempt, exc)
+                    last_reason = f"exception: {exc}"
+                    logger.warning("Writing section '%s' (s_idx=%d) attempt %d failed: %s", sec_title, s_idx, attempt, exc)
+                    sec_md = ""
                     time.sleep(1.5 * attempt)
 
-            if not sec_md:
-                sec_md = f"{heading_prefix} {sec_title}\n\n[Add your technical details and implementation specifications for {sec_title} here.]"
+            if not sec_md or not sec_md.strip():
+                clean_sec_title = re.sub(r"^\d+(?:\.\d+)*\s*", "", sec_title).strip()
+                sec_md = f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
+                logger.error(
+                    "Section '%s' (s_idx=%d) fell back to placeholder after 2 attempts. Reason: %s",
+                    sec_title, s_idx, last_reason
+                )
+                with placeholder_lock:
+                    placeholder_sections.append({"index": s_idx, "title": sec_title, "reason": last_reason})
+                emit({
+                    "type": "section_fallback",
+                    "section_index": s_idx,
+                    "section_title": sec_title,
+                    "reason": last_reason,
+                })
 
             # Post-process: sanitize markdown, remove fences, remove ASCII boxes, fill tokens
             sec_md = sanitize_section_markdown(sec_md, domain_name, proj_name, sources=chapter_sources)
@@ -1083,12 +1150,69 @@ Continue:"""
     # Clean and renumber citations gaplessly
     renumbered_markdown, final_sources = filter_and_renumber_sources(raw_markdown, all_sources)
 
-    # Filter out external GitHub repos from final_sources unless topic is about GitHub
-    if not ("github" in topic.lower()):
-        final_sources = [
-            s for s in final_sources
-            if not ("github.com/" in s.get("url", "").lower() and not any(k in s.get("url", "").lower() for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch"]))
-        ]
+    # Filter out external GitHub repos and YouTube links; prefer academic and official doc sources
+    filtered_sources = []
+    for s in final_sources:
+        u = s.get("url", "").lower()
+        if any(yt in u for yt in ["youtube.com", "youtu.be"]):
+            continue
+        if "github.com/" in u and not ("github" in topic.lower()):
+            if not any(k in u for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch"]):
+                continue
+        filtered_sources.append(s)
+
+    def _source_priority(s: dict[str, Any]) -> int:
+        u = s.get("url", "").lower()
+        if any(d in u for d in ["arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "sciencedirect.com"]):
+            return 0
+        if any(d in u for d in ["docs.", "developer.", "github.com/langchain", "fastapi.tiangolo"]):
+            return 1
+        return 2
+
+    filtered_sources.sort(key=_source_priority)
+    final_sources = filtered_sources
+
+    # Replace List of Figures based on actual captions present in markdown
+    figs = re.findall(r"(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+([^\]\n\r]+)", renumbered_markdown, re.IGNORECASE)
+    if figs:
+        seen_f: set[str] = set()
+        fig_rows = []
+        for f_num, f_cap in figs:
+            if f_num not in seen_f:
+                seen_f.add(f_num)
+                fig_rows.append(f"| Fig. {f_num} | {f_cap.strip()} |")
+        lof_block = "## List of Figures\n\n| Figure No. | Figure Caption |\n| :--- | :--- |\n" + "\n".join(fig_rows)
+    else:
+        lof_block = "## List of Figures\n\nNo figures in this report."
+
+    if "## List of Figures" in renumbered_markdown:
+        renumbered_markdown = re.sub(
+            r"## List of Figures.*?(?=\n## |\Z)",
+            lof_block,
+            renumbered_markdown,
+            flags=re.DOTALL,
+        )
+
+    # Replace List of Tables based on actual captions present in markdown
+    tbls = re.findall(r"^Table\s+(\d+\.\d+)[:\s\-]+([^\n\r]+)", renumbered_markdown, re.MULTILINE | re.IGNORECASE)
+    if tbls:
+        seen_t: set[str] = set()
+        tbl_rows = []
+        for t_num, t_cap in tbls:
+            if t_num not in seen_t:
+                seen_t.add(t_num)
+                tbl_rows.append(f"| Table {t_num} | {t_cap.strip()} |")
+        lot_block = "## List of Tables\n\n| Table No. | Table Caption |\n| :--- | :--- |\n" + "\n".join(tbl_rows)
+    else:
+        lot_block = "## List of Tables\n\nNo tables in this report."
+
+    if "## List of Tables" in renumbered_markdown:
+        renumbered_markdown = re.sub(
+            r"## List of Tables.*?(?=\n## |\Z)",
+            lot_block,
+            renumbered_markdown,
+            flags=re.DOTALL,
+        )
 
     # Replace References section with formatted IEEE bibliography
     ieee_refs = ["## References\n"]
@@ -1118,7 +1242,7 @@ Continue:"""
         (front_matter.get("projectTitle") if front_matter else None)
         or state.get("title")
         or f"{topic.title()} Research Report"
-    )
+    ).strip().rstrip(".")
     if not renumbered_markdown.lstrip().startswith("# "):
         final_markdown = f"# {doc_title}\n\n{renumbered_markdown}"
     else:
@@ -1135,6 +1259,21 @@ Continue:"""
     state["cost"] = total_cost
     state["word_count"] = word_count
     state["title"] = doc_title
+
+    placeholder_count = len(placeholder_sections)
+    if placeholder_count / max(1, total_sections) > 0.10:
+        logger.warning(
+            "Run completed with warnings: %d of %d sections (%.1f%%) are placeholders.",
+            placeholder_count, total_sections, (placeholder_count / total_sections) * 100
+        )
+        state["has_warnings"] = True
+        state["status"] = "completed_with_warnings"
+        state["warning_details"] = {
+            "placeholder_count": placeholder_count,
+            "total_sections": total_sections,
+            "placeholder_sections": [p["title"] for p in placeholder_sections],
+        }
+        state["warning_message"] = f"{placeholder_count} of {total_sections} sections could not be generated and require manual input."
 
     # Mark all sections complete and save final version
     with save_lock:

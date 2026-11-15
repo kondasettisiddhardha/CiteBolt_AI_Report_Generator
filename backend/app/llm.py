@@ -70,13 +70,22 @@ def get_llm(model: str | None = None) -> Any:
         ) from exc
 
     chosen_model = model or GROQ_MODEL
-    return ChatGroq(
-        model=chosen_model,
-        api_key=GROQ_API_KEY,
-        temperature=0.2,
-        max_tokens=8192,
-        max_retries=0,  # the graph handles retries with backoff
-    )
+    kwargs: dict[str, Any] = {
+        "model": chosen_model,
+        "api_key": GROQ_API_KEY,
+        "temperature": 0.2,
+        "max_tokens": 8192,
+        "max_retries": 0,  # the graph handles retries with backoff
+    }
+    model_lower = chosen_model.lower()
+    if any(k in model_lower for k in ["gpt-oss", "deepseek-r1", "-r1", "qwq", "o1", "o3"]):
+        kwargs["reasoning_effort"] = "low"
+
+    try:
+        return ChatGroq(**kwargs)
+    except Exception:
+        kwargs.pop("reasoning_effort", None)
+        return ChatGroq(**kwargs)
 
 
 def generate_text(
@@ -103,6 +112,12 @@ def generate_text(
                 finish_reason = resp.response_metadata.get("finish_reason") or "stop"
             elif hasattr(resp, "additional_kwargs") and resp.additional_kwargs:
                 finish_reason = resp.additional_kwargs.get("finish_reason") or "stop"
+
+            if not content or not content.strip():
+                raise RuntimeError(
+                    f"Model {chosen_model} returned empty content (finish_reason={finish_reason}). "
+                    "Completion tokens were likely exhausted by reasoning tokens."
+                )
 
             if hasattr(resp, "response_metadata") and resp.response_metadata.get("token_usage"):
                 tu = resp.response_metadata["token_usage"]
