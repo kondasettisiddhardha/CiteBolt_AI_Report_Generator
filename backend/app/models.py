@@ -22,6 +22,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     runs: Mapped[list["Run"]] = relationship(back_populates="user")
+    templates: Mapped[list["Template"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     settings: Mapped["UserSettings | None"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
@@ -48,7 +51,7 @@ class Run(Base):
     topic: Mapped[str] = mapped_column(String(300), nullable=False)
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     report_type: Mapped[str] = mapped_column(String(40), default="auto")
-    status: Mapped[str] = mapped_column(String(20), default="running", index=True)
+    status: Mapped[str] = mapped_column(String(100), default="running", index=True)
     report_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     sources_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -70,6 +73,24 @@ class Run(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User | None"] = relationship(back_populates="runs")
+    length: Mapped[str] = mapped_column(String(20), default="standard")
+    target_words: Mapped[int] = mapped_column(Integer, default=4000)
+    outline_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    front_matter_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Template(Base):
+    __tablename__ = "templates"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    outline_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="templates")
 
 
 class UserSettings(Base):

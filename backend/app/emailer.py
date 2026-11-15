@@ -84,9 +84,9 @@ def _otp_html(code: str) -> str:
 def send_otp_code(email: str, code: str) -> bool:
     return send_email(
         email,
-        f"Your Citebolt sign-in code: {code}",
+        f"Your CiteBolt sign-in code: {code}",
         _otp_html(code),
-        text=f"Your Citebolt sign-in code is {code}. It expires in 10 minutes.",
+        text=f"Your CiteBolt sign-in code is {code}. It expires in 10 minutes.",
     )
 
 

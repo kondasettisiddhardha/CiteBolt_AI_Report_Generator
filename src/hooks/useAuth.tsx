@@ -4,6 +4,9 @@ import type { ReactNode } from "react";
 export interface SessionUser {
   id: string;
   email: string;
+  runs_today?: number;
+  daily_limit?: number;
+  runs_left?: number;
 }
 
 interface AuthValue {

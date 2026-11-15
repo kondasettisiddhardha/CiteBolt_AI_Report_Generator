@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
 import Wordmark from "@/components/Wordmark";
+import Footer from "@/components/Footer";
 import { useAuth } from "@/hooks/useAuth";
 import { getStoredTheme, setStoredTheme, watchSystemTheme, type ThemePreference } from "@/lib/theme";
 
@@ -43,9 +44,7 @@ export default function Login() {
 
   useEffect(() => {
     return watchSystemTheme(() => {
-      if (getStoredTheme() === "system") {
-        setTheme("system");
-      }
+      setTheme(getStoredTheme());
     });
   }, []);
 
@@ -200,7 +199,7 @@ export default function Login() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-bg text-fg">
+    <div className="relative flex min-h-dvh flex-col bg-bg text-fg">
       {/* Radial teal glow backdrop matching reference */}
       <div
         className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(ellipse_75%_45%_at_50%_-10%,rgba(20,184,166,0.18),transparent_70%)] dark:bg-[radial-gradient(ellipse_75%_45%_at_50%_-10%,rgba(20,184,166,0.14),transparent_70%)]"
@@ -210,7 +209,7 @@ export default function Login() {
       {/* Top bar */}
       <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6 sm:px-8">
         <Link to="/" className="flex items-center gap-2.5 transition opacity-90 hover:opacity-100">
-          <img src="/logo.svg" className="h-7 w-7 shrink-0 rounded-lg" alt="Citebolt logo" />
+          <img src="/logo.svg" className="h-7 w-7 shrink-0 rounded-lg" alt="CiteBolt logo" />
           <Wordmark size="md" />
         </Link>
         <div className="flex items-center gap-3">
@@ -456,6 +455,8 @@ export default function Login() {
           </div>
         </div>
       </main>
+
+      <Footer className="relative z-10" />
     </div>
   );
 }

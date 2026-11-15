@@ -11,6 +11,7 @@ import {
   FileDown,
   FileText,
   Loader2,
+  Play,
   Plus,
   RotateCcw,
   Square,
@@ -29,13 +30,20 @@ interface StageEvent {
   status?: string;
   message?: string;
   error?: string;
+  section_index?: number;
+  total_sections?: number;
+  section_title?: string;
+  eta_seconds?: number;
+  waiting_rate_limit?: boolean;
+  active_model?: string;
+  old_model?: string;
 }
 
 interface RunDetail {
   id: string;
   topic: string;
   title: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "paused" | string;
   report_markdown: string;
   report_type: string;
   sources_count: number;
@@ -74,6 +82,15 @@ export default function RunProgress() {
   const [cancelling, setCancelling] = useState(false);
   const [copied, setCopied] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [sectionProgress, setSectionProgress] = useState<{
+    index: number;
+    total: number;
+    title: string;
+    eta_seconds?: number;
+    waiting_rate_limit?: boolean;
+    active_model?: string;
+  } | null>(null);
+  const [resuming, setResuming] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
@@ -138,7 +155,23 @@ export default function RunProgress() {
             if (!line) continue;
             const event: StageEvent = JSON.parse(line.slice(6));
 
-            if (event.type === "stage" && event.node) {
+            if (event.type === "section_progress" && event.section_index && event.total_sections) {
+              setSectionProgress({
+                index: event.section_index,
+                total: event.total_sections,
+                title: event.section_title || "",
+                eta_seconds: event.eta_seconds,
+                waiting_rate_limit: Boolean(event.waiting_rate_limit),
+                active_model: event.active_model,
+              });
+            } else if (event.type === "model_switched") {
+              toast.info(event.message || `Switched to fallback model ${event.active_model}`);
+              setSectionProgress((prev) => (prev ? { ...prev, active_model: event.active_model } : null));
+            } else if (event.type === "paused") {
+              toast.warning(event.message || "Run paused: daily token limit reached.");
+              setRun((prev) => (prev ? { ...prev, status: "Paused: daily token limit reached", error_message: event.message || null } : null));
+              await loadRun();
+            } else if (event.type === "stage" && event.node) {
               setSteps((current) => ({
                 ...current,
                 [event.node as string]: {
@@ -153,24 +186,52 @@ export default function RunProgress() {
                   message: event.message,
                 },
               }));
-            } else if (event.type === "complete") {
-              await loadRun();
+              if (event.node === "writing" && event.status === "done") {
+                setTimeout(async () => {
+                  const data = await loadRun();
+                  if (data?.status === "completed") {
+                    navigate(`/reports/${id}`, { replace: true });
+                  }
+                }, 500);
+              }
+            } else if (event.type === "report" || event.type === "complete" || event.type === "end") {
+              const data = await loadRun();
+              if (data?.status === "completed") {
+                navigate(`/reports/${id}`, { replace: true });
+              }
             } else if (event.type === "error") {
-              setFatalError(event.error ?? "An error occurred.");
+              setFatalError(event.error ?? event.message ?? "An error occurred.");
               await loadRun();
             }
           }
         }
+        // Stream finished
+        const finalData = await loadRun();
+        if (finalData?.status === "completed") {
+          navigate(`/reports/${id}`, { replace: true });
+        }
       } catch (error) {
         if (!controller.signal.aborted) {
-          await loadRun();
+          const finalData = await loadRun();
+          if (finalData?.status === "completed") {
+            navigate(`/reports/${id}`, { replace: true });
+          }
         }
       }
     };
 
     void connect();
 
+    // Foolproof polling fallback while running
+    const pollTimer = setInterval(async () => {
+      const updated = await loadRun();
+      if (updated?.status === "completed") {
+        navigate(`/reports/${id}`, { replace: true });
+      }
+    }, 2000);
+
     return () => {
+      clearInterval(pollTimer);
       controller.abort();
     };
   }, [id, run?.status, loadRun]);
@@ -239,9 +300,24 @@ export default function RunProgress() {
     }
   };
 
+  const handleResume = async () => {
+    setResuming(true);
+    try {
+      await api<{ resumed: boolean }>(`/api/runs/${id}/resume`, { method: "POST" });
+      toast.success("Resuming run from the first unfinished section...");
+      setRun((prev) => (prev ? { ...prev, status: "running", error_message: null } : null));
+      setFatalError(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to resume run.");
+    } finally {
+      setResuming(false);
+    }
+  };
+
   const isCompleted = run?.status === "completed";
   const isRunning = run?.status === "running";
-  const isFailed = run?.status === "failed";
+  const isPaused = Boolean(run?.status && run.status.toLowerCase().includes("pause"));
+  const isFailed = run?.status === "failed" && !isPaused;
 
   const durationStr = formatMSS(run?.elapsed_seconds ?? seconds);
   const costStr = `$${Number(run?.cost_usd || 0).toFixed(4)}`;
@@ -261,9 +337,11 @@ export default function RunProgress() {
             <span>
               {isRunning
                 ? `Working… ${seconds}s elapsed`
-                : isFailed
-                  ? "Run failed"
-                  : `Completed · ${run?.sources_count ?? 0} cited sources`}
+                : isPaused
+                  ? "Paused: daily token limit reached"
+                  : isFailed
+                    ? "Run failed"
+                    : `Completed · ${run?.sources_count ?? 0} cited sources`}
             </span>
           </div>
 
@@ -290,6 +368,17 @@ export default function RunProgress() {
             >
               <Square className="h-3.5 w-3.5" aria-hidden="true" />
               Cancel
+            </button>
+          )}
+          {(isPaused || isFailed) && (
+            <button
+              type="button"
+              onClick={handleResume}
+              disabled={resuming}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-teal-500 disabled:opacity-50"
+            >
+              {resuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Resume run
             </button>
           )}
           {isFailed && (
@@ -360,22 +449,110 @@ export default function RunProgress() {
               );
             })}
           </ol>
+
+          {/* Section-by-section live progress indicator */}
+          {sectionProgress && (
+            <div className="mt-6 rounded-xl border border-accent/30 bg-accent-soft/30 p-4">
+              <div className="flex items-center justify-between text-xs font-semibold text-fg">
+                <span className="flex items-center gap-1.5 text-accent">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Writing section {sectionProgress.index} of {sectionProgress.total}
+                  {sectionProgress.waiting_rate_limit && (
+                    <span className="ml-2 inline-flex items-center rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-500">
+                      waiting for rate limit
+                    </span>
+                  )}
+                  {sectionProgress.active_model && (
+                    <span className="ml-2 inline-flex items-center rounded border border-line bg-surface/80 px-1.5 py-0.5 text-[10px] font-mono text-muted">
+                      {sectionProgress.active_model.replace("openai/", "").replace("-versatile", "")}
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2">
+                  {sectionProgress.eta_seconds != null &&
+                  Number.isFinite(sectionProgress.eta_seconds) &&
+                  sectionProgress.eta_seconds > 0 ? (
+                    <span className="font-mono text-[11px] text-muted">
+                      ~{formatMSS(Math.round(sectionProgress.eta_seconds))} remaining
+                    </span>
+                  ) : (
+                    <span className="font-mono text-[11px] text-muted">
+                      estimating...
+                    </span>
+                  )}
+                  <span className="tabular-nums text-muted">
+                    {Math.round((sectionProgress.index / sectionProgress.total) * 100)}%
+                  </span>
+                </div>
+              </div>
+              <p className="mt-1.5 truncate text-sm font-bold text-fg">
+                {sectionProgress.title}
+              </p>
+              {/* Progress bar */}
+              <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-line">
+                <div
+                  className="h-full rounded-full bg-accent transition-all duration-300"
+                  style={{
+                    width: `${Math.round((sectionProgress.index / sectionProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </section>
       )}
 
-      {/* When failed: show error */}
+      {/* When paused: show clear message and Resume button */}
+      {isPaused && (
+        <div className="mt-8 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 text-amber-800 dark:text-amber-200">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-bold flex items-center gap-2">
+                <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+                Paused: daily token limit reached
+              </h2>
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                {run?.error_message ||
+                  "Daily token limit reached on Groq. All finished sections have been safely saved. You can resume this run as soon as your quota resets."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleResume}
+              disabled={resuming}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-teal-500 disabled:opacity-50"
+            >
+              {resuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Resume run
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* When failed: show error and options to retry or resume */}
       {isFailed && (
         <div className="mt-8 rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-          <h2 className="text-sm font-bold">Research pipeline failed</h2>
+          <h2 className="text-sm font-bold">Research pipeline stopped</h2>
           <p className="mt-1 text-xs">{fatalError || "An unexpected error occurred during execution."}</p>
-          <button
-            type="button"
-            onClick={retry}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Retry now
-          </button>
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleResume}
+              disabled={resuming}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-500 disabled:opacity-50"
+            >
+              {resuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Resume from saved sections
+            </button>
+            <button
+              type="button"
+              onClick={retry}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-surface border border-line px-3 py-1.5 text-xs font-medium text-fg hover:bg-surface-hover"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Restart from beginning
+            </button>
+          </div>
         </div>
       )}
 

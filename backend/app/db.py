@@ -58,6 +58,26 @@ def init_db() -> None:
             connection.execute(text("ALTER TABLE runs ADD COLUMN word_count INTEGER DEFAULT 0"))
         logger.info("Added runs.word_count column")
 
+    if "length" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE runs ADD COLUMN length VARCHAR(20) DEFAULT 'standard'"))
+        logger.info("Added runs.length column")
+
+    if "target_words" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE runs ADD COLUMN target_words INTEGER DEFAULT 4000"))
+        logger.info("Added runs.target_words column")
+
+    if "outline_json" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE runs ADD COLUMN outline_json TEXT"))
+        logger.info("Added runs.outline_json column")
+
+    if "front_matter_json" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE runs ADD COLUMN front_matter_json TEXT"))
+        logger.info("Added runs.front_matter_json column")
+
     logger.info("Database ready at %s", ENGINE_URL.split("@")[-1])
 
 

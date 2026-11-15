@@ -1,4 +1,4 @@
-"""Text normalization and report helpers for Citebolt."""
+"""Text normalization and report helpers for CiteBolt."""
 
 from __future__ import annotations
 
@@ -80,6 +80,17 @@ def clean_title(raw: str, fallback_topic: str = "") -> str:
     return value
 
 
+def strip_heading_numbering(markdown: str) -> str:
+    """Strip leading numbers like '1. ', '2) ', '3.1 ' from ## and ### headings."""
+    def clean_line(match: re.Match[str]) -> str:
+        hashes = match.group(1)
+        rest = match.group(2)
+        cleaned_rest = re.sub(r"^(?:\d+(?:\.\d+)*[\.\-\)]\s*)+", "", rest).strip()
+        return f"{hashes} {cleaned_rest}"
+
+    return re.sub(r"^(#{2,4})\s+(.+)$", clean_line, markdown, flags=re.MULTILINE)
+
+
 def prepare_report(
     report_markdown: str,
     sources: list[dict[str, Any]] | None = None,
@@ -89,6 +100,8 @@ def prepare_report(
     if not normalized:
         title = clean_title("", fallback_topic=topic)
         return title, ""
+
+    normalized = strip_heading_numbering(normalized)
 
     lines = normalized.splitlines()
     raw_title = ""

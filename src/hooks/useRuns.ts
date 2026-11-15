@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { api } from "@/lib/api";
 
 export type RunStatus = "queued" | "running" | "completed" | "failed";
 
@@ -47,9 +48,7 @@ export function useRuns(options?: RunListOptions) {
     const load = async () => {
       try {
         const params = new URLSearchParams({ limit: String(limit), query });
-        const data = await fetch(`/api/runs?${params.toString()}`).then((r) =>
-          r.ok ? r.json() : []
-        );
+        const data = await api<unknown[]>(`/api/runs?${params.toString()}`).catch(() => []);
         if (cancelled) return;
         const rawList = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
         const normalized: RunItem[] = rawList.map((item) => ({

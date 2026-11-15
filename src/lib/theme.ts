@@ -1,7 +1,7 @@
 export type ThemePreference = "light" | "dark" | "system";
 
 const STORAGE_KEY = "citebolt-theme";
-const LEGACY_STORAGE_KEY = "dossier-theme";
+const LEGACY_STORAGE_KEY = "citebolt-theme";
 
 export function getStoredTheme(): ThemePreference {
   if (typeof window === "undefined") return "system";
@@ -26,6 +26,7 @@ export function setStoredTheme(preference: ThemePreference): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, preference);
   applyTheme(preference);
+  window.dispatchEvent(new CustomEvent("citebolt-theme-change", { detail: preference }));
 }
 
 export function watchSystemTheme(onChange: () => void): () => void {
@@ -33,5 +34,11 @@ export function watchSystemTheme(onChange: () => void): () => void {
   const media = window.matchMedia("(prefers-color-scheme: dark)");
   const listener = () => onChange();
   media.addEventListener("change", listener);
-  return () => media.removeEventListener("change", listener);
+  window.addEventListener("citebolt-theme-change", listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    media.removeEventListener("change", listener);
+    window.removeEventListener("citebolt-theme-change", listener);
+    window.removeEventListener("storage", listener);
+  };
 }

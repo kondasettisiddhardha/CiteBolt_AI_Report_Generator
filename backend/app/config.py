@@ -36,7 +36,25 @@ DEFAULT_BACKOFF = 2
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+_fallback_raw = os.getenv("GROQ_FALLBACK_MODELS", "")
+GROQ_FALLBACK_MODELS: list[str] = [
+    m.strip() for m in _fallback_raw.split(",") if m.strip()
+]
+if not GROQ_FALLBACK_MODELS:
+    GROQ_FALLBACK_MODELS = ["qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+# --- Model Pricing (USD per 1M tokens) ---------------------------------
+MODEL_PRICING: dict[str, dict[str, float]] = {
+    "openai/gpt-oss-120b": {"input_per_million": 0.15, "output_per_million": 0.60},
+    "qwen/qwen3.8-27b": {"input_per_million": 0.20, "output_per_million": 0.60},
+    "openai/gpt-oss-20b": {"input_per_million": 0.08, "output_per_million": 0.24},
+    "llama-3.3-70b-versatile": {"input_per_million": 0.59, "output_per_million": 0.79},
+    "llama-3.1-70b-versatile": {"input_per_million": 0.59, "output_per_million": 0.79},
+    "llama-3.1-8b-instant": {"input_per_million": 0.05, "output_per_million": 0.08},
+    "mixtral-8x7b-32768": {"input_per_million": 0.24, "output_per_million": 0.24},
+    "default": {"input_per_million": 0.20, "output_per_million": 0.50},
+}
 
 # --- Server ------------------------------------------------------------
 HOST = os.getenv("HOST", "127.0.0.1")
@@ -65,14 +83,14 @@ OTP_RESEND_SECONDS = _read_int("OTP_RESEND_SECONDS", 30)
 
 # --- Email -------------------------------------------------------------
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL = os.getenv("FROM_EMAIL", "Citebolt <onboarding@resend.dev>")
+FROM_EMAIL = os.getenv("FROM_EMAIL", "CiteBolt <onboarding@resend.dev>")
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = _read_int("SMTP_PORT", 587)
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "")
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", CONTACT_EMAIL or "")
-APP_NAME = os.getenv("APP_NAME", "Citebolt")
+APP_NAME = os.getenv("APP_NAME", "CiteBolt")
 
 # --- Limits ------------------------------------------------------------
 DAILY_RUN_LIMIT = _read_int("DAILY_RUN_LIMIT", 10)

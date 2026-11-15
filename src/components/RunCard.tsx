@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
-import { Clock, FileText, ExternalLink, Rss, Trash2 } from "lucide-react";
+import { Clock, FileText, ExternalLink, Rss, Trash2, Zap } from "lucide-react";
 import type { RunItem } from "@/hooks/useRuns";
 import { exportUrl } from "@/lib/api";
 import StatusBadge from "./StatusBadge";
@@ -48,6 +48,12 @@ export default function RunCard({ run, onDelete }: { run: RunItem; onDelete?: (r
             <Rss className="h-3.5 w-3.5" aria-hidden="true" />
             {sourcesCount} sources
           </span>
+          {Boolean(run.tokenCount && run.tokenCount > 0) && (
+            <span className="inline-flex items-center gap-1.5">
+              <Zap className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+              {run.tokenCount?.toLocaleString()} tokens
+            </span>
+          )}
         </div>
       </div>
 

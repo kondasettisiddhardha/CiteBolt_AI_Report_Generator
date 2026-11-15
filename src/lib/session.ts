@@ -5,12 +5,16 @@ import { useAuth } from "@/hooks/useAuth";
 /** Session helpers shared by the login page, the composer and the shell. */
 
 const DRAFT_KEY = "citebolt-run-draft";
-const LEGACY_DRAFT_KEY = "dossier-run-draft";
+const LEGACY_DRAFT_KEY = "citebolt-run-draft";
 
 export interface RunDraftSnapshot {
   topic: string;
   context: string;
   reportType: string;
+  length?: any;
+  outline?: any;
+  template_outline?: any;
+  front_matter?: any;
 }
 
 export function saveDraft(draft: RunDraftSnapshot): void {
@@ -31,6 +35,9 @@ export function loadDraft(): RunDraftSnapshot | null {
       topic: parsed.topic,
       context: typeof parsed.context === "string" ? parsed.context : "",
       reportType: typeof parsed.reportType === "string" ? parsed.reportType : "auto",
+      length: parsed.length,
+      template_outline: parsed.template_outline ?? parsed.outline,
+      front_matter: parsed.front_matter,
     };
   } catch {
     return null;

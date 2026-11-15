@@ -52,11 +52,11 @@ export default function Workspace() {
           <h2 className="text-base font-semibold text-fg">Recent runs</h2>
           <button
             type="button"
-            onClick={() => navigate("/catalog")}
+            onClick={() => navigate("/examples")}
             className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted transition-colors hover:text-fg"
           >
             <Rss className="h-3.5 w-3.5" aria-hidden="true" />
-            View catalog
+            View examples
           </button>
         </div>
         <div className="border-t border-line" />

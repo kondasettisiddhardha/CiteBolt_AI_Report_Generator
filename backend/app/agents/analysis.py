@@ -143,18 +143,28 @@ def analysis_node(state: ResearchState) -> ResearchState:
 
     sources_text = sources_text or "(No sources available to analyse.)"
 
-    chain = ANALYSIS_PROMPT | get_llm() | parser
+    llm = get_llm()
+    prompt_val = ANALYSIS_PROMPT.invoke(
+        {
+            "topic": topic,
+            "sources": sources_text,
+            "sources_escaped": sources_text.replace("{", "{{").replace("}", "}}"),
+            "format_instructions": parser.get_format_instructions(),
+        }
+    )
 
     for attempt in range(1, RETRIES + 1):
         try:
-            result = chain.invoke(
-                {
-                    "topic": topic,
-                    "sources": sources_text,
-                    "sources_escaped": sources_text.replace("{", "{{").replace("}", "}}"),
-                    "format_instructions": parser.get_format_instructions(),
-                }
-            )
+            ai_msg = llm.invoke(prompt_val)
+            usage = getattr(ai_msg, "usage_metadata", None) or getattr(ai_msg, "response_metadata", {}).get("token_usage", {})
+            in_tok = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+            out_tok = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+            tot_tok = usage.get("total_tokens") or (in_tok + out_tok)
+            state["input_tokens"] = state.get("input_tokens", 0) + in_tok
+            state["output_tokens"] = state.get("output_tokens", 0) + out_tok
+            state["token_usage"] = state.get("token_usage", 0) + tot_tok
+
+            result = parser.parse(ai_msg.content)
             state["insights"] = result.model_dump()
             # Normalise statistics into a plain list for the writer.
             state["insights"]["statistics"] = result.statistics

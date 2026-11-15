@@ -13,7 +13,14 @@ export default function NewRun() {
 
   async function start(draft: RunDraft) {
     if (!user) {
-      saveDraft({ topic: draft.topic, context: draft.context, reportType: draft.reportType });
+      saveDraft({
+        topic: draft.topic,
+        context: draft.context,
+        reportType: draft.reportType,
+        length: draft.length,
+        template_outline: draft.template_outline,
+        front_matter: draft.front_matter,
+      });
       navigate(loginUrl("/runs/new"));
       return;
     }
@@ -26,6 +33,11 @@ export default function NewRun() {
           topic: draft.topic,
           context: draft.context,
           reportType: draft.reportType,
+          length: draft.length ?? "standard",
+          targetWords: draft.targetWords ?? 4000,
+          template_outline: draft.template_outline,
+          outline: draft.template_outline,
+          front_matter: draft.front_matter,
         }),
       });
       clearDraft();
@@ -38,26 +50,7 @@ export default function NewRun() {
   }
 
   return (
-    <div className="text-left">
-      <header className="mb-6">
-        <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">
-          New research run
-        </p>
-        <h1 className="mt-2 text-[28px] font-bold tracking-tight text-fg sm:text-[34px]">
-          What should we research?
-        </h1>
-        <p className="mt-2 max-w-[640px] text-[16px] sm:text-[17px] leading-relaxed text-muted">
-          Give the planner a topic, add any background material, and pick the shape the report
-          should take.
-        </p>
-        {!user && (
-          <p className="mt-3 inline-flex rounded-lg border border-line bg-surface px-3 py-2 text-xs text-muted">
-            You can draft the brief now. Starting the run requires an account — your topic is kept
-            when you sign in.
-          </p>
-        )}
-      </header>
-
+    <div className="w-full py-2">
       <RunComposer starting={starting} onStart={start} />
     </div>
   );

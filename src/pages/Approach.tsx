@@ -45,7 +45,7 @@ export default function Approach() {
           Three agents, one rule: nothing gets written that a source cannot back.
         </h1>
         <p className="mt-3 max-w-[640px] text-[16px] sm:text-[17px] leading-relaxed text-muted">
-          Citebolt is a small pipeline, not a chat window. Each agent has one job and hands off a
+          CiteBolt is a small pipeline, not a chat window. Each agent has one job and hands off a
           verifiable artifact to the next, which is what makes the finished report checkable.
         </p>
       </header>

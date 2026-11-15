@@ -57,16 +57,22 @@ def start_run(
     def work() -> None:
         state: dict[str, Any] = dict(initial_state)
         try:
-            state = stream_pipeline(initial_state, active.emit)
+            # Section-by-section generation when outline is provided or length is specified
+            if initial_state.get("outline") or initial_state.get("length") in {"short", "standard", "long"}:
+                from app.agents.section_engine import run_section_pipeline
+                state = run_section_pipeline(initial_state, active.emit, lambda: active.cancelled)
+            else:
+                state = stream_pipeline(initial_state, active.emit)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Run %s failed", run_id)
             active.emit({"type": "error", "message": f"The run failed: {exc}"})
         finally:
-            active.done = True
             try:
                 on_finish(run_id, state, active.cancelled)
             except Exception:  # pragma: no cover - defensive
                 logger.exception("Failed to finalise run %s", run_id)
+            active.emit({"type": "complete", "run_id": run_id})
+            active.done = True
 
     threading.Thread(target=work, name=f"run-{run_id[:8]}", daemon=True).start()
     return active

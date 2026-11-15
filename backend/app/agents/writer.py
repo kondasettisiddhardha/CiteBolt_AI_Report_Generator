@@ -14,7 +14,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import BACKOFF, RETRIES
-from app.llm import get_llm
+from app.llm import compute_cost, get_llm
 from app.state import ResearchState
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ Formatting rules:
   ellipsis. Never use em dashes, curly quotes or non-breaking spaces.
 - Write a short, clean, descriptive title as the first line, as "# Title". Never
   repeat the user's request as the title and never start with "Report about" or "Make a report".
+- Do not write numbers in headings: write "## Executive Summary" or "### Functional Requirements", NEVER "## 1. Executive Summary" or "### 3.1 Functional Requirements". Numbering is generated dynamically by the display layer.
 - Do not write a Sources or References section; it is generated automatically from the source data.
 
 Structure the Markdown like this:
@@ -101,8 +102,17 @@ REPORT_SHAPES: dict[str, str] = {
     "briefing": "Keep it tight: 5-6 sections, fastest to read.",
     "deepdive": "Go deep: 9-11 sections covering foundations, theory, and counterarguments.",
     "architectureblueprint": (
-        "Write it as an architecture blueprint: requirements, components, data flow, "
-        "trade-offs, and a delivery plan."
+        "Write an exhaustive, production-grade Architecture Blueprint with real technical depth (target at least 2,500 words). "
+        "Include comprehensive coverage of: "
+        "1) Executive Summary & Problem Scope; "
+        "2) Functional and Non-Functional Requirements (Scalability, Availability, Latency, Security, Compliance, SLAs); "
+        "3) System Architecture & Component Breakdown (Subsystems, responsibilities, API boundaries); "
+        "4) End-to-End Data Flow & Event Lifecycles (Sequence paths, async processing, caching, error recovery); "
+        "5) Technology Stack Comparison & Specifications (include a Markdown comparison table with trade-offs); "
+        "6) Architectural Trade-off Analysis & Decision Matrix (Alternatives considered, advantages, limitations, rationale); "
+        "7) Security, Resilience & Disaster Recovery (Auth, encryption, failure domains, circuit breakers, backups); "
+        "8) Phased Delivery Roadmap & Implementation Milestones (Phase 1 MVP, Phase 2 Hardening, Phase 3 Scale). "
+        "Provide thorough engineering specifications, concrete tables, and extensive actionable depth for each section without premature summarization."
     ),
     "researchpaper": (
         "Write it as a research paper: abstract, background, method, findings, "
@@ -160,26 +170,46 @@ def writer_node(state: ResearchState) -> ResearchState:
         today=today,
     )
 
-    chain = prompt | get_llm() | StrOutputParser()
+    llm = get_llm()
+    prompt_val = prompt.invoke(
+        {
+            "topic": topic,
+            "insights": insights_text,
+            "sources": source_blocks,
+            "report_shape": _report_shape(state.get("report_type")),
+            "background": _background(state.get("context")),
+            "today": today,
+        }
+    )
 
     for attempt in range(1, RETRIES + 1):
         try:
-            report = chain.invoke(
-                {
-                    "topic": topic,
-                    "insights": insights_text,
-                    "sources": source_blocks,
-                    "report_shape": _report_shape(state.get("report_type")),
-                    "background": _background(state.get("context")),
-                    "today": today,
-                }
-            )
+            ai_msg = llm.invoke(prompt_val)
+            usage = getattr(ai_msg, "usage_metadata", None) or getattr(ai_msg, "response_metadata", {}).get("token_usage", {})
+            in_tok = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+            out_tok = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+            tot_tok = usage.get("total_tokens") or (in_tok + out_tok)
+            state["input_tokens"] = state.get("input_tokens", 0) + in_tok
+            state["output_tokens"] = state.get("output_tokens", 0) + out_tok
+            state["token_usage"] = state.get("token_usage", 0) + tot_tok
+            state["cost"] = compute_cost(state.get("input_tokens", 0), state.get("output_tokens", 0))
+
+            raw_text = str(ai_msg.content)
             # Normalise: strip accidental triple-backtick fences.
-            report = report.strip()
+            report = raw_text.strip()
             if report.startswith("```"):
                 report = report.split("```", 1)[-1].strip()
             if report.startswith("json"):
                 report = report.split("\n", 1)[-1].strip()
+
+            word_count = len(report.split())
+            report_type_clean = (state.get("report_type") or "auto").lower()
+            if "architecture" in report_type_clean and word_count < 2500:
+                logger.warning(
+                    "Architecture blueprint produced %d words (target >= 2,500 words). "
+                    "Prompt was updated with exhaustive section guidance and max_tokens=8192.",
+                    word_count,
+                )
 
             state["report"] = report
             state["status"] = {

@@ -16,3 +16,13 @@ backend/data/
 
 *.tgz
 *.zip
+
+# Generated reports and test output
+output_*.pdf
+backend/output_*
+Report_*.docx
+Report_*.md
+Report_*.pdf
+backend/college_checkpoint.json
+backend/test_metrics.json
+backend/run_college_test.py

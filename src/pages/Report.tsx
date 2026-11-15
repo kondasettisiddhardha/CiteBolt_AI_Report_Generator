@@ -83,6 +83,10 @@ function formatDate(dateStr?: string | null): string {
   }
 }
 
+function cleanHeadingText(raw: string): string {
+  return raw.replace(/^(?:\d+(?:\.\d+)*[\.\-\)]\s*)+/, "").trim();
+}
+
 function extractHeadings(markdown: string): HeadingItem[] {
   const lines = markdown.split(/\r?\n/);
   const items: HeadingItem[] = [];
@@ -96,7 +100,8 @@ function extractHeadings(markdown: string): HeadingItem[] {
     const h3Match = trimmed.match(/^###\s+(.+)$/);
 
     if (h2Match) {
-      const text = h2Match[1].replace(/\{#.*?\}/, "").replace(/\*\*/g, "").trim();
+      const rawText = h2Match[1].replace(/\{#.*?\}/, "").replace(/\*\*/g, "").trim();
+      const text = cleanHeadingText(rawText);
       const lower = text.toLowerCase();
       if (
         lower === "references" ||
@@ -122,7 +127,8 @@ function extractHeadings(markdown: string): HeadingItem[] {
         });
       }
     } else if (h3Match) {
-      const text = h3Match[1].replace(/\{#.*?\}/, "").replace(/\*\*/g, "").trim();
+      const rawText = h3Match[1].replace(/\{#.*?\}/, "").replace(/\*\*/g, "").trim();
+      const text = cleanHeadingText(rawText);
       const lower = text.toLowerCase();
       if (lower === "references" || lower === "sources") continue;
       h3Count++;
@@ -283,8 +289,12 @@ export default function Report() {
   }
 
   const title = run.title?.trim() || run.topic;
-  const timeFormatted = formatMSS(run.elapsed_seconds);
-  const costFormatted = `$${Number(run.cost_usd || 0).toFixed(4)}`;
+  const timeFormatted =
+    run.elapsed_seconds && run.elapsed_seconds > 0 ? formatMSS(run.elapsed_seconds) : "N/A";
+  const costFormatted =
+    run.cost_usd && run.cost_usd > 0 ? `$${Number(run.cost_usd).toFixed(4)}` : "N/A";
+  const tokenFormatted =
+    run.token_count && run.token_count > 0 ? run.token_count.toLocaleString() : "N/A";
 
   return (
     <div className="text-left">
@@ -292,16 +302,6 @@ export default function Report() {
       <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
         {/* Left Column: Article */}
         <article className="min-w-0 max-w-[720px]">
-          {/* Back button */}
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            className="group mb-4 inline-flex items-center gap-2 text-xs font-medium text-muted transition-colors hover:text-fg"
-          >
-            <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" />
-            <span>Back</span>
-          </button>
-
           {/* Eyebrow */}
           <div>
             <span className="text-xs font-bold uppercase tracking-[0.2em] text-accent">
@@ -316,7 +316,7 @@ export default function Report() {
 
           {/* Subtitle */}
           <p className="mt-2 text-sm text-muted">
-            Generated in {timeFormatted} from {run.sources_count} cited sources · {words.toLocaleString()} words.
+            Generated in {timeFormatted !== "N/A" ? timeFormatted : "under a minute"} from {run.sources_count} cited sources · {words.toLocaleString()} words.
           </p>
 
           {/* Available exports bar */}
@@ -390,7 +390,8 @@ export default function Report() {
                   </h2>
                 ),
                 h2: ({ children }) => {
-                  const text = String(children).replace(/\*\*/g, "").trim();
+                  const rawText = String(children).replace(/\*\*/g, "").trim();
+                  const text = cleanHeadingText(rawText);
                   const slug = text
                     .toLowerCase()
                     .replace(/[^a-z0-9]+/g, "-")
@@ -400,12 +401,13 @@ export default function Report() {
                       id={slug}
                       className="mt-8 mb-3 text-xl font-bold tracking-tight text-fg scroll-mt-20 border-b border-line pb-2"
                     >
-                      {children}
+                      {text}
                     </h2>
                   );
                 },
                 h3: ({ children }) => {
-                  const text = String(children).replace(/\*\*/g, "").trim();
+                  const rawText = String(children).replace(/\*\*/g, "").trim();
+                  const text = cleanHeadingText(rawText);
                   const slug = text
                     .toLowerCase()
                     .replace(/[^a-z0-9]+/g, "-")
@@ -415,7 +417,7 @@ export default function Report() {
                       id={slug}
                       className="mt-6 mb-2 text-base font-semibold text-fg scroll-mt-20"
                     >
-                      {children}
+                      {text}
                     </h3>
                   );
                 },
@@ -558,7 +560,7 @@ export default function Report() {
             <div className="flex items-center justify-between py-2.5">
               <span className="text-muted">Tokens</span>
               <span className="font-medium text-fg">
-                {run.token_count ? run.token_count.toLocaleString() : "—"}
+                {tokenFormatted}
               </span>
             </div>
             <div className="flex items-center justify-between py-2.5">

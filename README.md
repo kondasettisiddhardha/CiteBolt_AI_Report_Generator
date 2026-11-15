@@ -1,6 +1,6 @@
-# Citebolt — research, distilled
+# CiteBolt — research, distilled
 
-Citebolt turns a topic into a source-cited research report. A three-agent LangGraph pipeline
+CiteBolt turns a topic into a source-cited research report. A three-agent LangGraph pipeline
 (Research → Analysis → Writing) searches the web, extracts structured insights, and writes a
 Markdown report you can read, export and come back to.
 

@@ -37,7 +37,7 @@ export default function Wordmark({ size = "md", className = "" }: WordmarkProps)
   return (
     <span
       className={`inline-flex items-center font-bold uppercase select-none ${sizeMap[size]} ${className}`}
-      aria-label="Citebolt"
+      aria-label="CiteBolt"
     >
       <span className="text-brand-cite" aria-hidden="true">
         CITE

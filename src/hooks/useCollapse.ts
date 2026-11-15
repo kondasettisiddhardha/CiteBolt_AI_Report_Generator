@@ -1,15 +1,19 @@
 import { useState } from "react";
 
 const STORAGE_KEY = "citebolt-sidebar-collapsed";
-const LEGACY_STORAGE_KEY = "dossier-sidebar-collapsed";
+const LEGACY_STORAGE_KEY = "Citebolt-sidebar-collapsed";
 
 function getStoredCollapsed(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined") return true;
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    const stored =
+      window.localStorage.getItem(STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    // Default: collapsed on screens 1024px and wider
+    if (stored === null) return true;
     return stored === "1" || stored === "true";
   } catch {
-    return false;
+    return true;
   }
 }
 

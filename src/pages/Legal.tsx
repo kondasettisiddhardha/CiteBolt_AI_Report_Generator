@@ -9,23 +9,6 @@ function LegalLayout({ title, children }: { title: string; children: React.React
         <div className="mt-6 space-y-5 text-[15px] leading-relaxed text-muted [&_h2]:mt-6 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-fg">
           {children}
         </div>
-        <footer className="mt-10 flex flex-wrap gap-4 border-t border-line pt-5 text-xs text-muted">
-          <Link to="/approach" className="hover:text-fg">
-            Approach
-          </Link>
-          <Link to="/catalog" className="hover:text-fg">
-            Catalog
-          </Link>
-          <Link to="/privacy" className="hover:text-fg">
-            Privacy
-          </Link>
-          <Link to="/terms" className="hover:text-fg">
-            Terms
-          </Link>
-          <Link to="/contact" className="hover:text-fg">
-            Contact
-          </Link>
-        </footer>
       </div>
     </div>
   );
@@ -35,7 +18,7 @@ export function Privacy() {
   return (
     <LegalLayout title="Privacy Policy">
       <p>
-        Citebolt keeps the smallest amount of data needed to run research reports for you. This page
+        CiteBolt keeps the smallest amount of data needed to run research reports for you. This page
         explains exactly what is stored.
       </p>
       <h2>What we store</h2>
@@ -69,7 +52,7 @@ export function Terms() {
   return (
     <LegalLayout title="Terms of Service">
       <p>
-        Citebolt generates research reports automatically. Use it as a starting point, not as a
+        CiteBolt generates research reports automatically. Use it as a starting point, not as a
         substitute for your own judgement.
       </p>
       <h2>Acceptable use</h2>

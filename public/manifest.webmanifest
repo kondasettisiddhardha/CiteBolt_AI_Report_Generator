@@ -1,7 +1,7 @@
 {
-  "name": "Citebolt — research, distilled",
-  "short_name": "Citebolt",
-  "description": "Citebolt turns a topic into a source-cited research report.",
+  "name": "CiteBolt — research, distilled",
+  "short_name": "CiteBolt",
+  "description": "CiteBolt turns a topic into a source-cited research report.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

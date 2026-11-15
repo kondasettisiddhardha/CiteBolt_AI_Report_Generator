@@ -17,7 +17,7 @@ import Runs from "@/pages/Runs";
 import Settings from "@/pages/Settings";
 import Contact from "@/pages/Contact";
 import Approach from "@/pages/Approach";
-import Catalog from "@/pages/Catalog";
+import Examples from "@/pages/Examples";
 import { Privacy, Terms } from "@/pages/Legal";
 import NotFound from "@/pages/NotFound";
 
@@ -50,7 +50,8 @@ export default function App() {
       children: [
         { index: true, element: <Landing /> },
         { path: "/workspace", element: <Workspace /> },
-        { path: "/catalog", element: <Catalog /> },
+        { path: "/examples", element: <Examples /> },
+        { path: "/catalog", element: <Navigate to="/examples" replace /> },
         { path: "/approach", element: <Approach /> },
         { path: "/privacy", element: <Privacy /> },
         { path: "/terms", element: <Terms /> },

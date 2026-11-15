@@ -45,7 +45,7 @@ export default function Landing() {
           you can use.
         </h1>
         <p className="mt-4 max-w-[640px] text-[16px] sm:text-[17px] leading-relaxed text-muted">
-          Give Citebolt a question. It searches, gathers sources, and writes a cited report.
+          Give CiteBolt a question. It searches, gathers sources, and writes a cited report.
           The result is yours to export, cite, and keep.
         </p>
 
@@ -61,21 +61,11 @@ export default function Landing() {
             <span>Start a research run</span>
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </button>
-          <a
-            href="#how-it-works"
-            onClick={(e) => {
-              e.preventDefault();
-              document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" });
-            }}
-            className="inline-flex h-[42px] items-center rounded-lg border border-line bg-card px-5 text-[14px] font-medium text-fg transition-colors hover:border-line-strong hover:bg-surface"
-          >
-            How it works
-          </a>
           {user && (
             <button
               type="button"
               onClick={() => navigate("/workspace")}
-              className="inline-flex h-[42px] items-center gap-1.5 rounded-lg border border-line px-4 text-[14px] font-medium text-muted transition-colors hover:text-fg"
+              className="inline-flex h-[42px] items-center gap-1.5 rounded-lg border border-line bg-card px-4 text-[14px] font-medium text-muted transition-colors hover:border-line-strong hover:bg-surface hover:text-fg"
             >
               <span>Workspace</span>
               <ArrowRight className="h-4 w-4" />
@@ -85,7 +75,7 @@ export default function Landing() {
       </div>
 
       {/* 3 Step Cards */}
-      <div id="how-it-works" className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6 scroll-mt-8">
+      <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
         {Steps.map((step, index) => (
           <article key={index} className="rounded-xl border border-line bg-card p-5 sm:p-6 shadow-sm">
             <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent">
@@ -98,21 +88,6 @@ export default function Landing() {
           </article>
         ))}
       </div>
-
-      {/* Footer */}
-      <footer className="mt-12 border-t border-line pt-6 pb-4 text-xs text-muted">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Wordmark size="sm" />
-            <span>· © {new Date().getFullYear()} Citebolt. All rights reserved.</span>
-          </div>
-          <nav className="flex items-center gap-4">
-            <Link to="/privacy" className="hover:text-fg">Privacy</Link>
-            <Link to="/terms" className="hover:text-fg">Terms</Link>
-            <Link to="/contact" className="hover:text-fg">Contact</Link>
-          </nav>
-        </div>
-      </footer>
     </div>
   );
 }
