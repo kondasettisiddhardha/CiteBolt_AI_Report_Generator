@@ -732,19 +732,25 @@ def _render_pdf_reportlab(
                 story.append(PageBreak())
 
             if is_template and "table of contents" in norm_heading:
-                story.append(Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style))
+                p = Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
+                p.keepWithNext = True
+                story.append(p)
                 story.append(Spacer(1, 8))
                 story.append(toc)
                 skip_until_next_heading = True
                 continue
             elif is_template and "list of figures" in norm_heading:
-                story.append(Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style))
+                p = Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
+                p.keepWithNext = True
+                story.append(p)
                 story.append(Spacer(1, 8))
                 story.append(lof)
                 skip_until_next_heading = True
                 continue
             elif is_template and "list of tables" in norm_heading:
-                story.append(Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style))
+                p = Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
+                p.keepWithNext = True
+                story.append(p)
                 story.append(Spacer(1, 8))
                 story.append(lot)
                 skip_until_next_heading = True
@@ -760,15 +766,23 @@ def _render_pdf_reportlab(
                         continue
                     disp_h1 = smart_title(text)
                     story.append(Spacer(1, 40))
-                    story.append(Paragraph(_md_inline_to_reportlab(disp_h1, is_template=True), title_page_h1_style))
+                    p = Paragraph(_md_inline_to_reportlab(disp_h1, is_template=True), title_page_h1_style)
+                    p.keepWithNext = True
+                    story.append(p)
                     story.append(Spacer(1, 20))
                 else:
-                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h1_style))
+                    p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h1_style)
+                    p.keepWithNext = True
+                    story.append(p)
             elif kind == "h2":
                 heading_style = h1_style if is_fm_major else h2_style
-                story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), heading_style))
+                p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), heading_style)
+                p.keepWithNext = True
+                story.append(p)
             elif kind == "h3":
-                story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h3_style))
+                p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h3_style)
+                p.keepWithNext = True
+                story.append(p)
             continue
 
         if skip_until_next_heading:

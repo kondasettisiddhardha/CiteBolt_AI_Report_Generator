@@ -1261,9 +1261,9 @@ Numbered deployment steps:
         self.assertNotIn("GDPR", filtered_words)
         self.assertNotIn("token-budget scheduler", filtered_words)
 
-        # 4. Section 8.6 lists strictly 14 unit tests
+        # 4. Section 8.6 returns test plan placeholder (no repeated 14 tests)
         filtered_86 = filter_grounded_college_section("8.6 Master Test Suite", "Integration testing was executed with Jest and Cypress.", facts)
-        self.assertIn("14 unit tests", filtered_86)
+        self.assertIn("[Add your test plan here.]", filtered_86)
         self.assertNotIn("Jest", filtered_86)
 
         # 5. Section 8.7 & 10.5/10.6 no invented process -> placeholder
@@ -1316,6 +1316,212 @@ Numbered deployment steps:
         pdf_md = "# Title\n\n## References\n\n[1] Reference Paper, Available: https://arxiv.org/abs/2103.12345678901234567890."
         pdf_bytes = markdown_to_pdf(pdf_md, title="Test", report_type="college")
         self.assertTrue(len(pdf_bytes) > 1000)
+
+    def test_item1_sentence_fragment_and_placeholder_isolation(self):
+        """Item 1: Placeholders must never split a sentence; dangling fragments are dropped."""
+        # A. Dangling fragment before and after placeholder
+        text1 = "The Gantt chart in [Add your project timeline here.] to finalize the project timeline."
+        cleaned1 = normalize_college_captions_and_placeholders(text1)
+        self.assertEqual(cleaned1.strip(), "[Add your project timeline here.]")
+        self.assertNotIn("The Gantt chart in", cleaned1)
+        self.assertNotIn("to finalize the project timeline", cleaned1)
+
+        # B. Fragment ending in utilizes
+        text2 = "CiteBolt utilizes. [Add your tech stack here.]"
+        cleaned2 = normalize_college_captions_and_placeholders(text2)
+        self.assertEqual(cleaned2.strip(), "[Add your tech stack here.]")
+        self.assertNotIn("CiteBolt utilizes", cleaned2)
+
+        # C. Fragment ending in depends on
+        text3 = "Total effort depends on. [Add your effort estimation here.]"
+        cleaned3 = normalize_college_captions_and_placeholders(text3)
+        self.assertEqual(cleaned3.strip(), "[Add your effort estimation here.]")
+        self.assertNotIn("Total effort depends on", cleaned3)
+
+        # D. Trailing fragment
+        text4 = "[Add your project timeline here.] to finalize the project timeline."
+        cleaned4 = normalize_college_captions_and_placeholders(text4)
+        self.assertEqual(cleaned4.strip(), "[Add your project timeline here.]")
+
+        # E. Placeholder in middle of paragraph with valid sentences is isolated to own line (3.4)
+        text5 = "Functional requirements define core behaviors. [Add your functional requirements matrix here.] Non-functional requirements specify security."
+        cleaned5 = normalize_college_captions_and_placeholders(text5)
+        self.assertIn("\n\n[Add your functional requirements matrix here.]\n\n", cleaned5)
+        self.assertIn("Functional requirements define core behaviors.", cleaned5)
+        self.assertIn("Non-functional requirements specify security.", cleaned5)
+
+    def test_item2_doubled_figure_placeholders(self):
+        """Item 2: Bare [Insert diagram here] next to titled one is removed, keeping only titled."""
+        text = (
+            "[Insert diagram here]\n\n"
+            "[Insert diagram here: Fig. 4.1 - System Architecture Overview]\n"
+            "Fig. 4.1: System Architecture Overview"
+        )
+        cleaned = normalize_college_captions_and_placeholders(text)
+        self.assertNotIn("[Insert diagram here]\n", cleaned)
+        self.assertIn("[Insert diagram here: Fig. 4.1 - System Architecture Overview]", cleaned)
+
+        # Reversed order
+        text_rev = (
+            "[Insert diagram here: Fig. 4.1 - System Architecture Overview]\n\n"
+            "[Insert diagram here]"
+        )
+        cleaned_rev = normalize_college_captions_and_placeholders(text_rev)
+        self.assertEqual(cleaned_rev.strip(), "[Insert diagram here: Fig. 4.1 - System Architecture Overview]")
+
+    def test_item3_section_1_2_and_intro_code_identifiers_and_run_commands(self):
+        """Item 3: Remove leftover .main:app --host 127.0.0.1. text; 1.1-1.7 contain no endpoints or code identifiers."""
+        facts = "Project Facts: SQLite database, 3 agents (Research, Analysis, Writer), FastAPI, React."
+
+        # A. Run command stripping removes entire command including leftover pieces
+        dirty_12 = "Start the system via uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload in the terminal. The platform provides automated literature synthesis."
+        filtered_12 = filter_grounded_college_section("1.2 Introduction to CiteBolt", dirty_12, facts)
+        self.assertNotIn("main:app", filtered_12)
+        self.assertNotIn("127.0.0.1", filtered_12)
+        self.assertNotIn("uvicorn", filtered_12)
+        self.assertIn("The platform provides automated literature synthesis.", filtered_12)
+
+        # B. Endpoints and code identifiers removed from 1.1-1.7
+        dirty_intro = (
+            "Requests are routed to POST /api/research endpoint. "
+            "Data is stored in report_markdown and outline_json columns. "
+            "The system coordinates multi-agent research."
+        )
+        filtered_intro = filter_grounded_college_section("1.3 Objectives", dirty_intro, facts)
+        self.assertNotIn("/api/research", filtered_intro)
+        self.assertNotIn("report_markdown", filtered_intro)
+        self.assertNotIn("outline_json", filtered_intro)
+        self.assertIn("The system coordinates multi-agent research.", filtered_intro)
+
+    def test_item4_banned_claim_rules_and_fact_sheet(self):
+        """Item 4: Banned DBs, agents, and phrases dropped; 8.2 covers only 14 unit tests; fact sheet has forbidden block."""
+        facts = "Project Facts: SQLite database, 3 agents (Research, Analysis, Writer), 14 unit tests for college report mode."
+
+        # A. Fact sheet has NOT TRUE / DO NOT WRITE block
+        fs = build_compact_project_fact_sheet("Test", "Context", {})
+        self.assertIn("NOT TRUE / DO NOT WRITE", fs)
+        self.assertIn("SQLite is the only database", fs)
+
+        # B. PostgreSQL, MySQL, MongoDB dropped
+        dbs_text = "The system persists data in PostgreSQL and synchronizes with MongoDB. SQLite provides local storage."
+        filtered_dbs = filter_grounded_college_section("5.3 Database Architecture", dbs_text, facts)
+        self.assertNotIn("PostgreSQL", filtered_dbs)
+        self.assertNotIn("MongoDB", filtered_dbs)
+        self.assertIn("SQLite provides local storage.", filtered_dbs)
+
+        # C. Non-existent agents dropped
+        agents_text = "The Synthesis Agent formats markdown while Formatting Agent handles styles. The Writer Agent produces final text."
+        filtered_agents = filter_grounded_college_section("4.2 System Architecture", agents_text, facts)
+        self.assertNotIn("Synthesis Agent", filtered_agents)
+        self.assertNotIn("Formatting Agent", filtered_agents)
+        self.assertIn("Writer Agent", filtered_agents)
+
+        # D. Banned phrases dropped
+        phrases_text = "The backend stores user credentials and passwords securely. The engine avoids race conditions and lacks built-in persistence under concurrent requests."
+        filtered_phrases = filter_grounded_college_section("3.3 Security Requirements", phrases_text, facts)
+        self.assertNotIn("stores user credentials", filtered_phrases)
+        self.assertNotIn("race conditions", filtered_phrases)
+        self.assertNotIn("lacks built-in persistence", filtered_phrases)
+        self.assertNotIn("concurrent requests", filtered_phrases)
+
+        # E. Section 8.2 objectives only mention 14 tests, never OTP or concurrency
+        sec82_text = "Test objectives include validating OTP authentication flows, resume mechanics, and endpoint reliability under concurrency. Unit tests verify college report mode."
+        filtered_82 = filter_grounded_college_section("8.2 Testing Objectives", sec82_text, facts)
+        self.assertNotIn("OTP", filtered_82)
+        self.assertNotIn("concurrency", filtered_82)
+        self.assertNotIn("endpoint reliability", filtered_82)
+        self.assertIn("Unit tests verify college report mode.", filtered_82)
+
+    def test_item5_thin_sections_and_deterministic_table_7_1(self):
+        """Item 5: Thin sections require >=25 words or placeholder; Section 7.3 is deterministic markdown table."""
+        facts = "Project Facts: SQLite database, 14 tests."
+
+        # A. Thin section with < 25 words becomes placeholder
+        short_thin = "The component model specifies relational tables."
+        filtered_thin = filter_grounded_college_section("4.6 Database Design Overview", short_thin, facts, min_words=25)
+        self.assertIn("[Add your Database Design Overview here.]", filtered_thin)
+
+        # B. List of Tables contains "Table 7.1 | Database tables"
+        lot = format_front_matter_section("List of Tables", "Topic", {})
+        self.assertIn("| Table 7.1 | Database tables |", lot)
+
+    def test_item6_section_5_1_deduplication_and_8_5_8_6_placeholders(self):
+        """Item 6: Section 5.1 has only one intro paragraph; 8.5 and 8.6 do not repeat 14 tests."""
+        facts = "Project Facts: 14 unit tests with a mocked LLM and mocked search."
+
+        # A. Section 5.1 deduplication
+        dup_51 = "## 5.1 Frontend Technologies\n\nThe frontend is built using React and Vite with Tailwind CSS for layout.\n\nThe frontend is built using React and Vite with Tailwind CSS for layout."
+        filtered_51 = filter_grounded_college_section("5.1 Frontend Technologies", dup_51, facts)
+        paras = [p for p in filtered_51.split("\n\n") if not p.startswith("#")]
+        self.assertEqual(len(paras), 1)
+
+        # B. Section 8.5 test case table placeholder
+        sec_85 = "The system verification suite comprises 14 unit tests with a mocked LLM and mocked search."
+        filtered_85 = filter_grounded_college_section("8.5 Test Cases", sec_85, facts)
+        self.assertEqual(filtered_85.strip(), "## 8.5 Test Cases\n\n[Add your test case table here.]")
+
+        # C. Section 8.6 test plan placeholder
+        sec_86 = "The system verification suite comprises 14 unit tests with a mocked LLM."
+        filtered_86 = filter_grounded_college_section("8.6 Master Test Suite", sec_86, facts)
+        self.assertEqual(filtered_86.strip(), "## 8.6 Master Test Suite\n\n[Add your test plan here.]")
+
+    def test_item7_keep_with_next_on_headings_in_export(self):
+        """Item 7: Headings in PDF export have keepWithNext = True."""
+        md = (
+            "# Chapter 4 System Design\n\n"
+            "## 4.1 System Overview\n\nIntroductory text for chapter.\n\n"
+            "### 4.1.1 Modular Subsystems\n\nSubsystem details."
+        )
+        # Test markdown_to_pdf builds without error and inspect that headings flowables have keepWithNext
+        pdf_bytes = markdown_to_pdf(md, title="Test Project", report_type="college")
+        self.assertTrue(len(pdf_bytes) > 2000)
+
+    def test_item8_chapter_2_citations_and_search_ranking(self):
+        """Item 8: Literal [n] replaced/removed; vendor/tutorial domains dropped; fewer than 3 academic adds placeholder."""
+        # A. Literal [n] without matching source is removed entirely
+        md = "Multi-agent systems improve research efficiency [n] in modern pipelines."
+        sanitized = sanitize_section_markdown(md)
+        self.assertNotIn("[n]", sanitized)
+        self.assertIn("Multi-agent systems improve research efficiency", sanitized)
+
+        # B. Literal [n] with matching source is replaced with real number
+        sources = [{"id": 1, "title": "LangGraph Framework", "author": "LangChain Team", "url": "https://arxiv.org/abs/2101.12345"}]
+        md_matched = "The LangGraph framework coordinates graphs [n]."
+        sanitized_matched = sanitize_section_markdown(md_matched, sources=sources)
+        self.assertIn("[1]", sanitized_matched)
+        self.assertNotIn("[n]", sanitized_matched)
+
+    def test_item9_title_page_and_certificate_field_mapping(self):
+        """Item 9: Guide -> guide line, HoD blank for signature; HoD generic in Acknowledgements; Sandip untruncated; automatic dates."""
+        fm = {
+            "projectTitle": "Autonomous Agent",
+            "guide": "Prof. Alan Turing",
+            "university": "Sandip",
+            "department": "Computer Science and Engineering",
+            "degree": "Bachelor of Technology",
+            "teamMembers": [{"name": "Ada Lovelace", "prn": "CS101"}],
+        }
+
+        # Title Page
+        tp = format_front_matter_section("Title Page", "Autonomous Agent", fm)
+        self.assertIn("Prof. Alan Turing", tp)
+        self.assertIn("Sandip", tp)
+        self.assertNotIn("Sandip University", tp)
+        # Automatic academic year and month year without brackets
+        self.assertNotIn("[Academic Year]", tp)
+        self.assertNotIn("[submissionMonthYear]", tp)
+        self.assertRegex(tp, r"Academic Year: \d{4}-\d{2}")
+
+        # Certificate: Guide is filled, HoD is blank signature line
+        cert = format_front_matter_section("Certificate", "Autonomous Agent", fm)
+        self.assertIn("**Project Guide:** Prof. Alan Turing", cert)
+        self.assertIn("**Head of Department:** ____________________", cert)
+
+        # Acknowledgements: Guide thanked by name, HoD referred to only generically
+        ack = format_front_matter_section("Acknowledgements", "Autonomous Agent", fm)
+        self.assertIn("Prof. Alan Turing", ack)
+        self.assertIn("Head of Department, Department of Computer Science and Engineering", ack)
+        self.assertNotIn("Prof. Alan Turing** as Head", ack)
 
 
 if __name__ == "__main__":

@@ -104,15 +104,15 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
         lines.append("Verified Architecture: System specification as outlined in project topic.")
     lines.extend([
         "Strict Rule: Ground Truth Rules for ALL Chapters:",
-        "1. Describe project ONLY from facts above. Web snippets are generic literature only; never attribute to user's project.",
-        "2. Name technologies ONLY if listed above. NEVER invent outside agents, Serper, Bedrock, Docker, CI/CD, backups, or alert thresholds.",
-        "3. System Architecture: The system has three agents; NEVER write 'single-agent'.",
-        "4. Duration: If Duration is blank, do NOT mention any time period or duration counts. Use placeholders for timeline and effort.",
-        "5. Testing: Describe testing strictly per facts (e.g. unit tests with mocked LLM and search).",
-        "6. Unspecified items: Write generically or as '[Add your <thing> here.]'.",
-        "7. Section 10.3 MUST use the exact How to Run command above.",
-        "8. Metrics: Never invent survey or benchmark numbers. Chapter 9.4: write ONLY '[Add your user feedback results here.]' if not in facts.",
-        "9. Citations [n]: Only for Chapters 1-2 literature, never for user's own project.",
+        "1. Describe project ONLY from facts above; never attribute web snippets to project.",
+        "2. System has 3 agents (Research, Analysis, Writer); NEVER write single-agent.",
+        "3. Duration blank = no time periods. Testing covers 14 unit tests with mocked LLM/search.",
+        "4. Unspecified details: write generically or '[Add your <thing> here.]'. Sec 10.3 uses exact run command.",
+        "NOT TRUE / DO NOT WRITE (Strictly Forbidden Claims):",
+        "- SQLite is the only database (do NOT mention PostgreSQL, MySQL, MongoDB, Redis).",
+        "- 3 agents only (no Synthesis/Formatting/knowledge graph/central controller/citation agent).",
+        "- No 'stores credentials/passwords', 'race conditions', 'lacks built-in persistence', 'concurrent requests'.",
+        "- Section 8.2 objectives cover ONLY the 14 unit tests (no OTP/resume/concurrency).",
     ])
     return "\n".join(lines)
 
@@ -182,6 +182,24 @@ def sanitize_section_markdown(
         replace_author_year,
         md,
     )
+
+    # 6b. Clean literal [n] or [N] citations.
+    # Replace literal [n] with real numbers matching References list ([1], [2], ...).
+    # If sentence cannot be tied to a real source, remove [n] entirely. Never print literal [n].
+    def replace_literal_n(match: re.Match[str]) -> str:
+        start = max(0, match.start() - 200)
+        end = min(len(md), match.end() + 200)
+        surrounding = md[start:end].lower()
+        if sources:
+            for idx, s in enumerate(sources, start=1):
+                s_title_words = [w for w in re.split(r"\W+", str(s.get("title", "")).lower()) if len(w) > 4]
+                s_author_words = [w for w in re.split(r"\W+", str(s.get("author", "")).lower()) if len(w) > 3]
+                if any(w in surrounding for w in s_title_words) or any(w in surrounding for w in s_author_words):
+                    src_num = s.get("number") or s.get("id") or idx
+                    return f"[{src_num}]"
+        return ""
+
+    md = re.sub(r"\[[nN]\]", replace_literal_n, md)
 
     # 7. Normalize placeholders to strictly '[Add your <title> here.]' with NO trailing periods or extra punctuation
     md = re.sub(r"\[Add your ([^\]]+) here\.?\]\.*", r"[Add your \1 here.]", md)
@@ -387,6 +405,211 @@ FORBIDDEN_COLLEGE_WORDS = [
     "token-budget scheduler",
 ]
 
+BANNED_DATABASES = [
+    "postgresql",
+    "postgres",
+    "mysql",
+    "mongodb",
+    "dynamodb",
+    "redis",
+    "cassandra",
+    "couchdb",
+]
+
+BANNED_AGENTS = [
+    "synthesis agent",
+    "formatting agent",
+    "knowledge graph",
+    "central controller",
+    "literature-search agent",
+    "citation agent",
+    "summarization agent",
+]
+
+BANNED_PHRASES = [
+    "stores user credentials",
+    "store user credentials",
+    "stores credentials",
+    "user passwords",
+    "stores passwords",
+    "stores user passwords",
+    "user credentials and passwords",
+    "user credentials/passwords",
+    "race conditions",
+    "race condition",
+    "lacks built-in persistence",
+    "lack of built-in persistence",
+    "concurrent requests",
+    "concurrent request",
+    "asynchronous research tasks",
+    "asynchronous research task",
+]
+
+DANGLING_END_RE = re.compile(
+    r"\b(?:in|on|at|for|with|by|from|to|into|onto|of|and|or|as|that|which|including|such as|depends on|utilizes|uses|delivers|provides|consists of|shown in|illustrates|depicts)\.?$",
+    re.IGNORECASE,
+)
+DANGLING_START_RE = re.compile(
+    r"^(?:to\s+[a-z]+|and\b|or\b|for\b|in\b|with\b|by\b|that\b|which\b|to finalize|to complete|[a-z])",
+)
+
+
+def is_dangling_fragment(s: str) -> bool:
+    s_clean = s.strip()
+    if not s_clean:
+        return True
+    s_no_punct = s_clean.rstrip(".?!:;").strip()
+    if re.search(r"\b(?:in|on|at|for|with|by|from|to|into|onto|of|and|or|as|that|which|including|such as|depends on|utilizes|uses|delivers|provides|consists of|shown in|illustrates|depicts)$", s_no_punct, re.IGNORECASE):
+        return True
+    if re.search(r"^(?:to\s+[a-z]+|and\b|or\b|for\b|in\b|with\b|by\b|that\b|which\b|to finalize|to complete)", s_clean, re.IGNORECASE):
+        return True
+    return False
+
+
+def clean_dangling_fragments_and_placeholders(text: str) -> str:
+    """Ensure placeholders never split sentences and clean up dangling fragments.
+    
+    1. Keeps only titled figure placeholders when doubled with bare ones.
+    2. Drops dangling fragments such as 'The Gantt chart in', 'CiteBolt utilizes.', 'Total effort depends on.'
+    3. Any paragraph with dangling fragments on either side of a placeholder becomes just the placeholder.
+    4. Placeholders are placed on their own line/paragraph and never sit in the middle of a paragraph.
+    """
+    if not text:
+        return text
+
+    # Deduplicate doubled figure placeholders
+    text = re.sub(
+        r"\[Insert diagram here\]\s*\n+\s*(\[Insert diagram here:\s*[^\]]+\])",
+        r"\1",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(\[Insert diagram here:\s*[^\]]+\])\s*\n+\s*\[Insert diagram here\]",
+        r"\1",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    lines = text.split("\n")
+    cleaned_lines = []
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if re.match(r"^\[Insert diagram here\]\.?$", s, re.IGNORECASE):
+            prev_line = ""
+            for p in reversed(cleaned_lines):
+                if p.strip():
+                    prev_line = p.strip()
+                    break
+            next_line = ""
+            for n in lines[i + 1:]:
+                if n.strip():
+                    next_line = n.strip()
+                    break
+            if (prev_line and re.match(r"^\[Insert diagram here:\s*[^\]]+", prev_line, re.IGNORECASE)) or \
+               (next_line and re.match(r"^\[Insert diagram here:\s*[^\]]+", next_line, re.IGNORECASE)):
+                continue
+        cleaned_lines.append(line)
+    text = "\n".join(cleaned_lines)
+
+    paragraphs = text.split("\n\n")
+    cleaned_paras: list[str] = []
+
+    for p in paragraphs:
+        p_strip = p.strip()
+        if not p_strip:
+            continue
+
+        if p_strip.startswith("#") or p_strip.startswith("|"):
+            cleaned_paras.append(p_strip)
+            continue
+
+        # Check if list block (each non-empty line starts with bullet / list marker)
+        lines = [ln for ln in p_strip.split("\n") if ln.strip()]
+        if lines and all(re.match(r"^\s*(?:[-*+]|\d+\.)\s+", ln) for ln in lines):
+            cleaned_items: list[str] = []
+            for ln in lines:
+                m_item = re.match(r"^(\s*(?:[-*+]|\d+\.)\s+)(.*)$", ln)
+                if not m_item:
+                    continue
+                marker = m_item.group(1)
+                body = m_item.group(2).strip()
+
+                ph_m = re.search(r"(\[Add (?:your|more)[^\]]+\])", body, re.IGNORECASE)
+                if not ph_m:
+                    if is_dangling_fragment(body):
+                        continue
+                    cleaned_items.append(f"{marker}{body}")
+                else:
+                    ph = ph_m.group(1).strip()
+                    b = body[:ph_m.start()].strip()
+                    a = body[ph_m.end():].strip()
+                    if not b and not a:
+                        cleaned_items.append(f"{marker}{ph}")
+                    elif is_dangling_fragment(b) or (a and is_dangling_fragment(a)):
+                        cleaned_items.append(f"{marker}{ph}")
+                    else:
+                        parts = []
+                        if b:
+                            parts.append(b)
+                        parts.append(ph)
+                        if a:
+                            parts.append(a)
+                        cleaned_items.append(f"{marker}{' '.join(parts)}")
+            if cleaned_items:
+                cleaned_paras.append("\n".join(cleaned_items))
+            continue
+
+        ph_match = re.search(r"(\[Add (?:your|more)[^\]]+\])", p_strip, re.IGNORECASE)
+        if not ph_match:
+            if is_dangling_fragment(p_strip):
+                continue
+            if "main:app" in p_strip or "127.0.0.1" in p_strip:
+                continue
+            cleaned_paras.append(p_strip)
+            continue
+
+        ph = ph_match.group(1).strip()
+        before = p_strip[:ph_match.start()].strip()
+        after = p_strip[ph_match.end():].strip()
+
+        if not before and not after:
+            cleaned_paras.append(ph)
+            continue
+
+        before_dangling = is_dangling_fragment(before) if before else False
+        after_dangling = is_dangling_fragment(after) if after else False
+
+        # Any paragraph that has a dangling fragment on either side of a placeholder becomes just the placeholder on its own line
+        if before_dangling or after_dangling:
+            valid_before: list[str] = []
+            if before:
+                sents = re.split(r"(?<=[.!?])\s+", before)
+                valid_before = [s.strip() for s in sents if s.strip() and not is_dangling_fragment(s)]
+            if valid_before:
+                cleaned_paras.append(" ".join(valid_before))
+            cleaned_paras.append(ph)
+            valid_after: list[str] = []
+            if after:
+                sents_after = re.split(r"(?<=[.!?])\s+", after)
+                valid_after = [s.strip() for s in sents_after if s.strip() and not is_dangling_fragment(s)]
+            if valid_after:
+                cleaned_paras.append(" ".join(valid_after))
+            continue
+
+        parts: list[str] = []
+        if before:
+            parts.append(before)
+        parts.append(ph)
+        if after:
+            parts.append(after)
+        cleaned_paras.extend(parts)
+
+    res = "\n\n".join(cleaned_paras).strip()
+    res = re.sub(r"\n{3,}", "\n\n", res)
+    return res
+
+
 REAL_DB_TABLES = {"users", "otp_codes", "runs", "templates", "user_settings", "contact_messages"}
 
 
@@ -405,6 +628,20 @@ def normalize_college_captions_and_placeholders(text: str) -> str:
     """
     if not text:
         return text
+
+    # 0. Deduplicate doubled figure placeholders
+    text = re.sub(
+        r"\[Insert diagram here\]\s*\n+\s*(\[Insert diagram here:\s*[^\]]+\])",
+        r"\1",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(\[Insert diagram here:\s*[^\]]+\])\s*\n+\s*\[Insert diagram here\]",
+        r"\1",
+        text,
+        flags=re.IGNORECASE,
+    )
 
     # 1. Collapse nested [Insert diagram here: [Insert diagram here: X]] to a single [Insert diagram here: X]
     while re.search(r"\[Insert diagram here:?\s*\[Insert diagram here:?\s*([^\]]*)\]\]", text, flags=re.IGNORECASE):
@@ -481,25 +718,6 @@ def normalize_college_captions_and_placeholders(text: str) -> str:
 
     # 6. A placeholder must never be inserted mid-word or mid-sentence (the 'per-run L[Add...]' bug)
     text = re.sub(r"\b[a-zA-Z]\[Add\s+", "[Add ", text)
-    text = re.sub(r"([a-zA-Z0-9_\-])\[Add\s+", r"\1.\n\n[Add ", text)
-
-    def _fix_mid_sentence_ph(m: re.Match[str]) -> str:
-        before = m.group(1).rstrip()
-        ph = m.group(2).strip()
-        after = m.group(3).lstrip()
-        if not before.endswith((".", "!", "?", ":", ";")):
-            before += "."
-        res = f"{before}\n\n{ph}"
-        if after:
-            res += f"\n\n{after}"
-        return res
-
-    text = re.sub(
-        r"^([^\n\-\*\d][^\n]*?)\s*(\[Add (?:your|more)[^\]]+\])\s*([a-zA-Z0-9][^\n]*)$",
-        _fix_mid_sentence_ph,
-        text,
-        flags=re.MULTILINE,
-    )
 
     # 7. Remove meta-text sentences
     meta_patterns = [
@@ -515,6 +733,9 @@ def normalize_college_captions_and_placeholders(text: str) -> str:
     # 8. Placeholder bullets must not be bold
     text = re.sub(r"\*\*(\[Add (?:your|more)[^\]]+\])\*\*", r"\1", text)
 
+    # 9. Clean dangling fragments, isolate placeholders, and eliminate doubled placeholders
+    text = clean_dangling_fragments_and_placeholders(text)
+
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text
 
@@ -525,6 +746,7 @@ def filter_grounded_college_section(
     fact_sheet: str = "",
     heading_prefix: str = "##",
     is_college: bool = True,
+    min_words: int = 2,
 ) -> str:
     """Post-generation grounding filter applied at the sentence level for college reports.
     
@@ -553,11 +775,6 @@ def filter_grounded_college_section(
         flags=re.IGNORECASE,
     )
 
-    # Repetition: remove run commands (uvicorn / npm run dev) from 1.1–1.5 and 5.1
-    is_early_section = any(norm_sec.startswith(f"1.{k}") for k in range(1, 6)) or norm_sec.startswith("5.1")
-    if is_early_section:
-        sec_md = re.sub(r"[^\.\n]*\b(?:uvicorn|npm\s+run\s+dev)\b[^\.\n]*\.?", "", sec_md, flags=re.IGNORECASE)
-
     # Section 8.7 & 10.5/10.6: no invented process (bug tracking, DB integrity monitoring, backup procedures)
     if any(k in norm_sec for k in ["8.7", "10.5", "10.6", "maintenance", "monitoring", "backup", "integrity"]):
         if "backup" not in facts_lower and "monitoring" not in facts_lower:
@@ -571,6 +788,9 @@ def filter_grounded_college_section(
 
     out_lines: list[str] = []
     has_body_text = False
+
+    is_intro_chapter = any(norm_sec.startswith(f"1.{k}") for k in range(1, 8)) or norm_sec.startswith("chapter 1")
+    duration_blank = "not specified" in facts_lower or "blank" in facts_lower or "project duration" not in facts_lower
 
     for line in sec_md.split("\n"):
         stripped = line.strip()
@@ -600,6 +820,48 @@ def filter_grounded_college_section(
             # Check forbidden tools (unless explicitly in facts)
             if any(tool in s_low for tool in FORBIDDEN_COLLEGE_TOOLS if tool not in facts_lower):
                 continue
+
+            # Banned databases (Item 4)
+            if any(db in s_low for db in BANNED_DATABASES if db not in facts_lower):
+                continue
+
+            # Banned agent names (Item 4)
+            if any(ba in s_low for ba in BANNED_AGENTS):
+                continue
+
+            # Banned phrases (Item 4)
+            if any(bp in s_low for bp in BANNED_PHRASES if bp not in facts_lower):
+                continue
+
+            # Section 8.2 objectives: only 14 unit tests (Item 4)
+            if "8.2" in norm_sec or ("test" in norm_sec and "objective" in norm_sec):
+                forbidden_82 = ["otp", "resume", "endpoint reliability", "concurrency", "concurrent", "load test", "stress test"]
+                if any(fb in s_low for fb in forbidden_82 if fb not in facts_lower):
+                    continue
+
+            # Sections 8.5 & 8.6 repetition: do not repeat 14 tests sentence from 8.1 / 8.3 (Item 6)
+            if any(k in norm_sec for k in ["8.5", "8.6", "test case", "test plan"]):
+                if any(x in s_low for x in ["14 unit tests", "14 tests", "mocked llm and mocked search"]):
+                    continue
+
+            # Run-command stripping at sentence level for 1.1-1.7 and 5.1 (Item 3)
+            if is_intro_chapter or norm_sec.startswith("5.1"):
+                if any(cmd in s_low for cmd in ["uvicorn", "npm run", "main:app", "127.0.0.1", "--host", "--port", "--reload", "8001"]):
+                    continue
+
+            # Section 1.1 to 1.7 must not contain endpoint paths or code identifiers (Item 3)
+            if is_intro_chapter:
+                if "/api/" in sent or any(ident in sent for ident in [
+                    "report_markdown", "outline_json", "user_id", "otp_codes", "code_hash",
+                    "user_settings", "contact_messages", "token_count", "sources_json",
+                    "word_count", "session_token"
+                ]):
+                    continue
+
+            # Duration: if duration is blank, drop duration count claims (Item 1)
+            if duration_blank:
+                if re.search(r"\b(?:three|four|six|twelve|two|2|3|4|6|12)\s+(?:months|weeks)\b", s_low):
+                    continue
 
             # Check ungrounded numbers/units not in facts
             has_invented_metric = False
@@ -641,13 +903,40 @@ def filter_grounded_college_section(
     result = "\n".join(out_lines).strip()
     result = re.sub(r"\n{3,}", "\n\n", result)
 
+    # Deduplicate paragraphs in 5.1 (Item 6): only one intro paragraph
+    if norm_sec.startswith("5.1"):
+        p_blocks = [p.strip() for p in result.split("\n\n") if p.strip()]
+        unique_blocks = []
+        for pb in p_blocks:
+            if pb.startswith("#"):
+                unique_blocks.append(pb)
+            elif not any(not b.startswith("#") for b in unique_blocks):
+                unique_blocks.append(pb)
+            else:
+                # Discard duplicate/additional intro paragraph in 5.1
+                pass
+        result = "\n\n".join(unique_blocks)
+
+    # Clean dangling fragments and normalize placeholders
+    result = clean_dangling_fragments_and_placeholders(result)
+
     text_without_headings = re.sub(r"^#+.*", "", result, flags=re.MULTILINE).strip()
     text_without_placeholders = re.sub(r"\[(?:Insert|Add)[^\]]+\]", "", text_without_headings).strip()
     words_remaining = len(text_without_placeholders.split())
 
-    if not has_body_text or words_remaining < 2:
-        if "8.6" in norm_sec:
-            return f"{heading_prefix} {sec_title}\n\nThe system verification suite comprises 14 unit tests with a mocked LLM and mocked search for the college report mode."
+    # Section 8.5 & 8.6 repetition fallback (Item 6)
+    if "8.5" in norm_sec or "test case" in norm_sec:
+        if not has_body_text or words_remaining < 25:
+            return f"{heading_prefix} {sec_title}\n\n[Add your test case table here.]"
+    if "8.6" in norm_sec or "test plan" in norm_sec or "master test" in norm_sec:
+        if not has_body_text or words_remaining < 25:
+            return f"{heading_prefix} {sec_title}\n\n[Add your test plan here.]"
+
+    # Thin sections (Item 5): 4.6, 4.7, 4.8, 6.3, 6.8, 7.3, 7.4, 7.5
+    is_thin_section = any(k in sec_title for k in ["4.6", "4.7", "4.8", "6.3", "6.8", "7.3", "7.4", "7.5"])
+    effective_min_words = max(min_words, 25) if (is_thin_section and min_words > 2) else min_words
+
+    if not has_body_text or words_remaining < effective_min_words:
         return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
 
     return result
@@ -662,26 +951,33 @@ def format_front_matter_section(
     norm = sec_title.lower().strip()
     fm = front_matter or {}
     proj_title = smart_title((fm.get("projectTitle") or topic).strip())
-    dept = fm.get("department") or ""
-    univ = fm.get("university") or ""
-    year = fm.get("academicYear") or ""
-    sub_date = fm.get("submissionMonthYear") or ""
-    guide = fm.get("guide") or ""
-    coord = fm.get("coordinator") or ""
-    hod = fm.get("hod") or ""
-    dean = fm.get("dean") or ""
+    now = datetime.now()
+    year_val = fm.get("academicYear", "").strip()
+    if not year_val:
+        if now.month >= 6:
+            year_val = f"{now.year}-{str(now.year + 1)[-2:]}"
+        else:
+            year_val = f"{now.year - 1}-{str(now.year)[-2:]}"
+
+    month_year_val = fm.get("submissionMonthYear", "").strip()
+    if not month_year_val:
+        month_year_val = now.strftime("%B %Y")
+
+    dept_raw = fm.get("department", "").strip()
+    dept = smart_title(dept_raw) if dept_raw else ""
+    univ_raw = fm.get("university", "").strip()
+    univ = univ_raw if univ_raw else ""
+    guide = smart_title(fm.get("guide", "").strip())
+    coord = smart_title(fm.get("coordinator", "").strip())
+    hod = smart_title(fm.get("hod", "").strip())
+    dean = smart_title(fm.get("dean", "").strip())
     members = fm.get("teamMembers") or []
 
     if "title page" in norm:
         degree = smart_title(fm.get("degree", "").strip()) or "[Degree]"
-        univ_raw = fm.get("university", "").strip()
-        univ = smart_title(univ_raw) if univ_raw else "[University Name]"
-        dept_raw = fm.get("department", "").strip()
-        dept = smart_title(dept_raw) if dept_raw else "[Department Name]"
-        guide_raw = fm.get("guide", "").strip()
-        guide = smart_title(guide_raw) if guide_raw else "[Project Guide]"
-        year = fm.get("academicYear", "").strip() or "[Academic Year]"
-        sub_date = fm.get("submissionMonthYear", "").strip()
+        univ_disp = univ if univ else "[University Name]"
+        dept_disp = dept if dept else "[Department Name]"
+        guide_disp = guide if guide else "[Project Guide]"
 
         has_named_members = any(
             isinstance(m, dict) and m.get("name", "").strip() for m in members
@@ -697,7 +993,7 @@ def format_front_matter_section(
         else:
             student_lines.append("[Student Name] (PRN: [PRN])")
 
-        year_str = year if year.lower().startswith("academic year") else f"Academic Year: {year}"
+        year_str = year_val if year_val.lower().startswith("academic year") else f"Academic Year: {year_val}"
 
         lines = [
             f"# {proj_title}",
@@ -707,13 +1003,12 @@ def format_front_matter_section(
             "Submitted by",
             *student_lines,
             "Under the guidance of",
-            guide,
-            dept,
-            univ,
+            guide_disp,
+            dept_disp,
+            univ_disp,
             year_str,
+            month_year_val,
         ]
-        if sub_date:
-            lines.append(sub_date)
         return "\n\n".join(lines).strip()
 
     if "certificate" in norm and not any(k in norm for k in ["publication", "appendix"]):
@@ -733,10 +1028,10 @@ def format_front_matter_section(
                 "Submitted by **[Student Name]** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements."
             )
 
-        guide_val = smart_title(guide) if guide else "____________________"
-        coord_val = smart_title(coord) if coord else "____________________"
-        hod_val = smart_title(hod) if hod else "____________________"
-        dean_val = smart_title(dean) if dean else "____________________"
+        guide_val = guide if guide else "____________________"
+        coord_val = coord if coord else "____________________"
+        hod_val = hod if hod else "____________________"
+        dean_val = dean if dean else "____________________"
 
         lines.extend([
             "Signatures",
@@ -748,12 +1043,12 @@ def format_front_matter_section(
         ])
         if dept or univ:
             dept_cert = smart_title(dept) if dept else ""
-            univ_cert = smart_title(univ) if univ else ""
+            univ_cert = univ if univ else ""
             lines.append(f"*{', '.join(filter(None, [dept_cert, univ_cert]))}*")
         return "\n\n".join(lines).strip()
 
     if "acknowledgement" in norm:
-        univ_ack = smart_title(fm.get("university", "").strip())
+        univ_ack = fm.get("university", "").strip()
         dept_ack = smart_title(fm.get("department", "").strip())
         lines = [
             "## Acknowledgements\n\n"
@@ -764,7 +1059,6 @@ def format_front_matter_section(
             "We convey our sincere thanks to the Project Coordinator"
             + (f", **{coord}**" if coord else "")
             + ", and to the Head of Department"
-            + (f", **{hod}**" if hod else "")
             + (f", Department of {dept_ack}" if dept_ack else "")
             + ", for providing excellent laboratory infrastructure, technical facilities, and continuous administrative support.\n\n"
             "We are equally indebted to the Principal / Dean"
@@ -834,7 +1128,7 @@ def format_front_matter_section(
             "| Table 5.2 | Comparison of Frontend, Backend & Database Choices |\n"
             "| Table 6.1 | Team Roles, Allocation & Effort Estimation |\n"
             "| Table 6.2 | Project Risk Management & Mitigation Matrix |\n"
-            "| Table 7.1 | Database Design & Data Dictionary |\n"
+            "| Table 7.1 | Database tables |\n"
             "| Table 8.1 | Master Test Suite, Execution Plan & Test Cases |\n"
             "| Table 9.1 | System Comparison with Existing Solutions |"
         )
@@ -1360,33 +1654,35 @@ Keywords: [5-7 comma-separated domain keywords]"""
                 raw = _collect_sources(search_query)
                 academic_sources = []
                 general_sources = []
+                banned_vendor_domains = [
+                    "machinelearningplus", "pinecone", "educative", "medium.com", "towardsdatascience",
+                    "circleci", "promptabcd", "geeksforgeeks", "tutorialspoint", "w3schools", "dev.to", "hashnode",
+                    "docker", "jenkins", "travis-ci", "datadog", "newrelic", "sentry",
+                    "atlassian", "jira", "bitbucket", "gitlab", "argocd",
+                    "youtube.com", "youtu.be", "reddit.com", "quora.com", "tiktok.com"
+                ]
                 for s in raw:
                     u = s.get("url", "").lower()
-                    if any(bad in u for bad in ["youtube.com", "youtu.be", "reddit.com", "quora.com", "tiktok.com"]):
+                    if any(bad in u for bad in banned_vendor_domains):
                         continue
-                    # Drop CI/CD, deployment, and vendor marketing blogs
-                    if any(bad in u for bad in [
-                        "circleci", "docker", "jenkins", "travis-ci", "datadog", "newrelic", "sentry",
-                        "atlassian", "jira", "bitbucket", "gitlab-ci", "argocd", "/blog/", "/blogs/"
-                    ]):
+                    if any(bad in u for bad in ["/blog/", "/blogs/", "/courses/", "/course/", "/tutorial/", "/tutorials/"]):
                         continue
                     if "github.com/" in u and not any(k in u for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch", "pytorch"]):
                         if not ("github" in topic.lower()):
                             continue
-                    is_academic = any(d in u for d in ["arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "sciencedirect.com", "semanticscholar.org", "researchgate.net", "docs.", "developer."])
-                    is_blog = any(b in u for b in ["medium.com", "dev.to", "hashnode.com", "towardsdatascience.com", "geeksforgeeks.org", "tutorialspoint.com", "w3schools.com"])
+                    is_academic = any(d in u for d in [
+                        "arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "openreview.net",
+                        "aclanthology.org", "sciencedirect.com", "semanticscholar.org", "researchgate.net", "tijer.org"
+                    ])
                     if is_academic:
                         academic_sources.append(s)
-                    elif not is_blog:
-                        general_sources.append(s)
                     else:
-                        s["is_online_resource"] = True
                         general_sources.append(s)
 
-                if len(academic_sources) >= 2:
+                if len(academic_sources) >= 1:
                     chapter_sources = academic_sources[:4]
                 else:
-                    chapter_sources = (academic_sources + general_sources)[:4]
+                    chapter_sources = general_sources[:4]
             except Exception as exc:
                 logger.warning("Chapter %d search failed: %s", actual_ch_num, exc)
 
@@ -1458,6 +1754,27 @@ Return ONLY bullet points starting with '- '."""
                 record_section_progress(sec_title)
                 continue
 
+            # Deterministic Data Dictionary for Section 7.3 (Item 5)
+            if re.search(r"^7\.3\b", sec_title) or (actual_ch_num == 7 and "data dictionary" in norm_sec):
+                sec_md = f"""{heading_prefix} {sec_title}
+
+The database schema is implemented using SQLite to provide persistent local storage for report workflows and settings. Table 7.1 describes each database table, its primary attributes, and operational role within the system.
+
+Table 7.1: Database tables
+
+| Table | Columns | Purpose |
+| :--- | :--- | :--- |
+| users | id, email | Stores registered user identity and email address. |
+| otp_codes | id, email, code_hash | Manages time-sensitive one-time password verification tokens. |
+| runs | id, topic, status, report_markdown | Persists report generation workflows, outlines, and markdown artifacts. |
+| templates | id, name, outline_json | Stores predefined and custom report structural templates. |
+| user_settings | user_id, theme | Retains user preference settings including interface display theme. |
+| contact_messages | id, email, message | Captures user feedback and contact form submissions. |"""
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
+
             heading_prefix = "#" * min(3, sec_lvl + 1)
             # Cheaper model: use it ONLY for Acknowledgements and short "Summary" sections (sec_target <= 150).
             # Keep Abstract, Conclusion, Introduction and Motivation on the main model.
@@ -1475,6 +1792,10 @@ Return ONLY bullet points starting with '- '."""
                 f"- Diagrams: Where a diagram is needed (architecture, ERD, sequence, flowchart, Gantt), insert a clean placeholder on its own line: '[Insert diagram here: Fig. {actual_ch_num}.N - Description]'. Do NOT use '>' or ASCII boxes.",
                 "- Do NOT generate a Sources or References section; that will be compiled at the end.",
             ]
+
+            is_thin_sec = any(k in sec_title for k in ["4.6", "4.7", "4.8", "6.3", "6.8", "7.4", "7.5"])
+            if is_thin_sec:
+                rules.append("- THIN SECTION (CRITICAL): Write exactly 2-3 dense sentences (~50-80 words) grounded strictly in the verified project facts. Do NOT invent external tools, databases, or processes.")
 
             is_intro_section = (
                 re.search(r"^\d+\.1\s+introduction", norm_sec)
@@ -1501,7 +1822,7 @@ Return ONLY bullet points starting with '- '."""
                 if re.search(r"^1\.1\b", sec_title):
                     rules.append("- SECTION 1.1 DOMAIN OVERVIEW: Focus strictly on the general domain background, real-world context, and landscape. Do NOT describe the specific software architecture, backend, or agents of the proposed project.")
                 elif re.search(r"^1\.2\b", sec_title):
-                    rules.append("- SECTION 1.2 PROJECT INTRODUCTION: Introduce the high-level purpose and motivation of the project. Do NOT repeat the general domain background or list detailed technical code/endpoints.")
+                    rules.append("- SECTION 1.2 PROJECT INTRODUCTION: A short narrative intro to the project: what it does, the three agents (Research, Analysis, Writer), and the stack by name only (FastAPI, React, SQLite, LangGraph). Intro sections are PROSE ONLY. Do NOT include endpoint paths, database column names, run commands, or code identifiers like report_markdown.")
                 elif re.search(r"^1\.3\b", sec_title):
                     rules.append("- SECTION 1.3 PROBLEM STATEMENT: Formulate the specific core technical problems and limitations being solved. Do NOT repeat project features or general introduction.")
                 elif re.search(r"^1\.4\b", sec_title):
@@ -1662,6 +1983,15 @@ Continue:"""
                         sec_md = ""
                         continue
 
+                    if is_thin_sec and attempt == 1 and len(sec_md.strip().split()) < 25:
+                        last_reason = "thin_section_too_short"
+                        logger.warning(
+                            "Thin section '%s' (s_idx=%d) attempt 1 was too short (%d words). Retrying once with focused prompt...",
+                            sec_title, s_idx, len(sec_md.strip().split())
+                        )
+                        sec_md = ""
+                        continue
+
                     break
                 except DailyTokenLimitError as dt_err:
                     raise dt_err
@@ -1701,6 +2031,7 @@ Continue:"""
                 fact_sheet=ch_facts,
                 heading_prefix=heading_prefix,
                 is_college=True,
+                min_words=25 if is_thin_sec else 2,
             )
             sec_md = normalize_college_captions_and_placeholders(sec_md)
 
@@ -1815,10 +2146,22 @@ Continue:"""
     renumbered_markdown, final_sources = filter_and_renumber_sources(raw_markdown, all_sources)
 
     # Filter out external GitHub repos and YouTube links; prefer academic and official doc sources
+    academic_patterns = [
+        "arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com",
+        "openreview.net", "aclanthology.org", "sciencedirect.com",
+        "semanticscholar.org", "researchgate.net", "tijer.org"
+    ]
+    banned_ref_domains = [
+        "machinelearningplus", "pinecone", "educative", "medium.com", "towardsdatascience",
+        "circleci", "promptabcd", "geeksforgeeks", "tutorialspoint", "w3schools", "dev.to", "hashnode",
+        "docker", "jenkins", "travis-ci", "datadog", "newrelic", "sentry", "atlassian", "jira",
+        "youtube.com", "youtu.be", "/blog/", "/blogs/", "/courses/", "/course/", "/tutorial/", "/tutorials/"
+    ]
+
     filtered_sources = []
     for s in final_sources:
         u = s.get("url", "").lower()
-        if any(yt in u for yt in ["youtube.com", "youtu.be"]):
+        if any(bd in u for bd in banned_ref_domains):
             continue
         if "github.com/" in u and not ("github" in topic.lower()):
             if not any(k in u for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch"]):
@@ -1827,14 +2170,18 @@ Continue:"""
 
     def _source_priority(s: dict[str, Any]) -> int:
         u = s.get("url", "").lower()
-        if any(d in u for d in ["arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "sciencedirect.com"]):
+        if any(d in u for d in academic_patterns):
             return 0
         if any(d in u for d in ["docs.", "developer.", "github.com/langchain", "fastapi.tiangolo"]):
             return 1
         return 2
 
     filtered_sources.sort(key=_source_priority)
-    final_sources = filtered_sources
+    academic_sources = [s for s in filtered_sources if any(d in s.get("url", "").lower() for d in academic_patterns)]
+    if len(academic_sources) >= 3:
+        final_sources = academic_sources
+    else:
+        final_sources = academic_sources if academic_sources else filtered_sources
 
     # Format IEEE bibliography using only real sources returned by search
     ieee_refs = ["## References\n"]
