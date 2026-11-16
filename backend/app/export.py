@@ -12,9 +12,12 @@ import datetime as dt
 import html
 import io
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("citebolt.export")
 
 from jinja2 import Template
 from markdown_it import MarkdownIt
@@ -124,10 +127,29 @@ def _meta_values(
 
 # --- PDF --------------------------------------------------------------
 def _md_inline_to_reportlab(text: str, is_template: bool = False) -> str:
-    escaped = html.escape(text or "")
+    if not text:
+        return ""
+
+    # 1. Extract inline code spans (`...`) FIRST into placeholders, XML-escaping their content
+    code_spans: list[str] = []
+
+    def _extract_code(m: re.Match[str]) -> str:
+        idx = len(code_spans)
+        # XML-escape code content (including &, <, > while preserving literal * and _)
+        code_spans.append(html.escape(m.group(1)))
+        return f"@@CB_CODE_{idx}@@"
+
+    processed = re.sub(r"`([^`\n]+)`", _extract_code, text)
+
+    # 2. XML-escape the remaining prose text
+    escaped = html.escape(processed)
+
+    # 3. Apply bold and italic conversion to remaining prose text
+    # Bold **...** before italic *...*
     escaped = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
-    escaped = re.sub(r"\*(.+?)\*", r"<i>\1</i>", escaped)
-    escaped = re.sub(r"`([^`]+)`", r'<font face="Courier" size="10">\1</font>', escaped)
+    escaped = re.sub(r"\*([^\*\n]+?)\*", r"<i>\1</i>", escaped)
+
+    # 4. Citations & Links
     if is_template:
         escaped = re.sub(
             r"\[(\d{1,3})\]",
@@ -150,6 +172,7 @@ def _md_inline_to_reportlab(text: str, is_template: bool = False) -> str:
             r'<a href="\2" color="#0d9488"><u>\1</u></a>',
             escaped,
         )
+
     for sym in ("✓", "✗", "✔", "✘"):
         if sym in escaped:
             escaped = escaped.replace(sym, f'<font face="DejaVuSans">{sym}</font>')
@@ -164,7 +187,83 @@ def _md_inline_to_reportlab(text: str, is_template: bool = False) -> str:
         return u
 
     escaped = re.sub(r"(?<!href=\")https?://[^\s<>\"]+", _break_url, escaped)
+
+    # 5. Restore inline code spans wrapped in <font face="Courier">
+    for idx, code_content in enumerate(code_spans):
+        ph = f"@@CB_CODE_{idx}@@"
+        repl = f'<font face="Courier" size="10">{code_content}</font>'
+        escaped = escaped.replace(ph, repl)
+        escaped = escaped.replace(html.escape(ph), repl)
+
     return escaped
+
+
+def safe_paragraph(text: str, style: Any, bullet_text: str | None = None) -> Any:
+    """Safe wrapper around ReportLab Paragraph that never lets an XML error fail the export."""
+    from reportlab.platypus import Paragraph
+    try:
+        return Paragraph(text, style, bulletText=bullet_text)
+    except Exception as exc:
+        logger.warning(
+            "Paragraph parsing failed for text: %r (error: %s). Falling back to stripped plain text.",
+            text,
+            exc,
+        )
+        stripped = re.sub(r"<[^>]+>", "", text or "")
+        safe_text = html.escape(stripped)
+        try:
+            return Paragraph(safe_text, style, bulletText=bullet_text)
+        except Exception as exc2:
+            logger.warning("Fallback paragraph parsing also failed: %s", exc2)
+            return Paragraph("", style)
+
+
+def _normalize_college_title_page_markdown(md: str) -> str:
+    """Ensure Title Page in college/template reports contains required centered lines."""
+    m_cert = re.search(r"(?:^|\n)##\s+Certificate\b", md, re.IGNORECASE)
+    if not m_cert:
+        return md
+
+    tp_text = md[:m_cert.start()]
+    norm_tp = tp_text.lower()
+
+    # Check for missing labels in Title Page
+    if "a project report" in norm_tp:
+        # Check 'submitted in partial fulfilment'
+        if not ("submitted in partial fulfilment" in norm_tp or "submitted in partial fulfillment" in norm_tp):
+            tp_text = re.sub(
+                r"(A\s+PROJECT\s+REPORT)\s*\n+",
+                r"\1\n\nSubmitted in partial fulfilment of the requirements for the award of the degree of\n\n",
+                tp_text,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+        # Check 'submitted by'
+        if "submitted by" not in norm_tp:
+            tp_text = re.sub(
+                r"(\*\*[^\*\n]+\*\*)\s*\n+(?=[A-Za-z0-9\[])",
+                r"\1\n\nSubmitted by\n\n",
+                tp_text,
+                count=1,
+            )
+
+        # Check 'under the guidance of'
+        if "under the guidance of" not in norm_tp:
+            tp_text = re.sub(
+                r"(\(PRN:[^\)\n]+\))\s*\n+([A-Za-z\.\s]+)\s*\n+(?=Department:)",
+                r"\1\n\nUnder the guidance of\n\n\2\n\n",
+                tp_text,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+    rest = md[m_cert.start():]
+    # Clean certificate asterisks around university if any: e.g. *sandip university* -> Sandip University
+    rest = re.sub(r"\*([a-z\s]+university[a-z\s]*)\*", lambda m: smart_title(m.group(1)), rest, flags=re.IGNORECASE)
+    rest = re.sub(r"\bsandip university\b", "Sandip University", rest, flags=re.IGNORECASE)
+
+    return tp_text + rest
 
 
 def _render_pdf_reportlab(
@@ -219,7 +318,7 @@ def _render_pdf_reportlab(
 
         def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
             if len(self._lastEntries) == 0:
-                self._table = Table([[Paragraph("<i>No figures in this report</i>", table_cell_style)]], colWidths=[availWidth])
+                self._table = Table([[safe_paragraph("<i>No figures in this report</i>", table_cell_style)]], colWidths=[availWidth])
                 return self._table.wrapOn(self.canv, availWidth, availHeight)
             return super().wrap(availWidth, availHeight)
 
@@ -230,7 +329,7 @@ def _render_pdf_reportlab(
 
         def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
             if len(self._lastEntries) == 0:
-                self._table = Table([[Paragraph("<i>No tables in this report</i>", table_cell_style)]], colWidths=[availWidth])
+                self._table = Table([[safe_paragraph("<i>No tables in this report</i>", table_cell_style)]], colWidths=[availWidth])
                 return self._table.wrapOn(self.canv, availWidth, availHeight)
             return super().wrap(availWidth, availHeight)
 
@@ -377,7 +476,11 @@ def _render_pdf_reportlab(
                     if not _is_toc_excluded(low):
                         self.notify("TOCEntry", (2, raw_text, page, None))
                 else:
-                    fig_m = re.search(r"(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+([^\]\n\r]+)", raw_text, re.IGNORECASE)
+                    ch1 = NumberedCanvas._chapter1_page
+                    if ch1 is not None and page < ch1:
+                        return
+
+                    fig_m = re.search(r"^(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+([^\]\n\r]+)", raw_text, re.IGNORECASE)
                     if fig_m and not low.startswith(("as shown", "refer to", "in fig", "see fig")):
                         fig_title = f"Fig. {fig_m.group(1)}: {fig_m.group(2).strip()}"
                         if fig_title not in self._seen_figs:
@@ -584,6 +687,16 @@ def _render_pdf_reportlab(
         spaceBefore=6,
         spaceAfter=4,
     )
+    code_block_style = ParagraphStyle(
+        "CodeBlock",
+        fontName="Courier",
+        fontSize=10,
+        leading=14,
+        textColor=colors.HexColor("#1f2937"),
+        leftIndent=24 if is_template else 18,
+        spaceBefore=2,
+        spaceAfter=2,
+    )
 
     toc = TableOfContents()
     lof = ListOfFigures()
@@ -643,19 +756,19 @@ def _render_pdf_reportlab(
 
     # Header block
     if not is_template:
-        story.append(Paragraph('<font color="#0f766e"><b>CITE</b></font><font color="#171717"><b>BOLT</b></font> <font color="#8a8a8a"><b>RESEARCH REPORT</b></font>', eyebrow_style))
-        story.append(Paragraph(_md_inline_to_reportlab(title), title_style))
+        story.append(safe_paragraph('<font color="#0f766e"><b>CITE</b></font><font color="#171717"><b>BOLT</b></font> <font color="#8a8a8a"><b>RESEARCH REPORT</b></font>', eyebrow_style))
+        story.append(safe_paragraph(_md_inline_to_reportlab(title), title_style))
         meta_line = " &middot; ".join(
             filter(None, [meta.get("date"), meta.get("report_type"), meta.get("sources_label"), meta.get("topic")])
         )
-        story.append(Paragraph(meta_line, meta_style))
+        story.append(safe_paragraph(meta_line, meta_style))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#e5e7eb"), spaceAfter=14))
 
     # Executive summary
     if summary_md:
-        summary_elements: list[Any] = [Paragraph("Executive Summary", summary_title_style)]
+        summary_elements: list[Any] = [safe_paragraph("Executive Summary", summary_title_style)]
         for p_text in _plain_blocks(summary_md):
-            summary_elements.append(Paragraph(_md_inline_to_reportlab(p_text), summary_p_style))
+            summary_elements.append(safe_paragraph(_md_inline_to_reportlab(p_text), summary_p_style))
         summary_table = Table([[summary_elements]], colWidths=[printable_width])
         summary_table.setStyle(
             TableStyle([
@@ -672,6 +785,9 @@ def _render_pdf_reportlab(
         story.append(Spacer(1, 14))
 
     # Body elements
+    if is_template:
+        body_md = _normalize_college_title_page_markdown(body_md)
+
     skip_until_next_heading = False
     in_title_page = is_template
     in_references = False
@@ -687,19 +803,28 @@ def _render_pdf_reportlab(
         kind = block["kind"]
         text = block.get("text", "")
 
+        # Code block rendering
+        if kind == "code":
+            for c_line in text.splitlines():
+                c_clean = c_line.strip()
+                if c_clean:
+                    story.append(safe_paragraph(html.escape(c_clean), code_block_style))
+            story.append(Spacer(1, 6))
+            continue
+
         # Ensure title page has the large bold project title at the very top
         if is_template and in_title_page and not title_h1_rendered:
             if kind == "h1":
                 title_h1_rendered = True
                 disp_title = title_to_use if text.lower() in ("title page", "title") else smart_title(text)
                 story.append(Spacer(1, 40))
-                story.append(Paragraph(_md_inline_to_reportlab(disp_title, is_template=True), title_page_h1_style))
+                story.append(safe_paragraph(_md_inline_to_reportlab(disp_title, is_template=True), title_page_h1_style))
                 story.append(Spacer(1, 20))
                 continue
             else:
                 title_h1_rendered = True
                 story.append(Spacer(1, 40))
-                story.append(Paragraph(_md_inline_to_reportlab(title_to_use, is_template=True), title_page_h1_style))
+                story.append(safe_paragraph(_md_inline_to_reportlab(title_to_use, is_template=True), title_page_h1_style))
                 story.append(Spacer(1, 20))
 
         if kind in ("h1", "h2", "h3"):
@@ -732,7 +857,7 @@ def _render_pdf_reportlab(
                 story.append(PageBreak())
 
             if is_template and "table of contents" in norm_heading:
-                p = Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
+                p = safe_paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
                 p.keepWithNext = True
                 story.append(p)
                 story.append(Spacer(1, 8))
@@ -740,7 +865,7 @@ def _render_pdf_reportlab(
                 skip_until_next_heading = True
                 continue
             elif is_template and "list of figures" in norm_heading:
-                p = Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
+                p = safe_paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
                 p.keepWithNext = True
                 story.append(p)
                 story.append(Spacer(1, 8))
@@ -748,7 +873,7 @@ def _render_pdf_reportlab(
                 skip_until_next_heading = True
                 continue
             elif is_template and "list of tables" in norm_heading:
-                p = Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
+                p = safe_paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style)
                 p.keepWithNext = True
                 story.append(p)
                 story.append(Spacer(1, 8))
@@ -766,21 +891,21 @@ def _render_pdf_reportlab(
                         continue
                     disp_h1 = smart_title(text)
                     story.append(Spacer(1, 40))
-                    p = Paragraph(_md_inline_to_reportlab(disp_h1, is_template=True), title_page_h1_style)
+                    p = safe_paragraph(_md_inline_to_reportlab(disp_h1, is_template=True), title_page_h1_style)
                     p.keepWithNext = True
                     story.append(p)
                     story.append(Spacer(1, 20))
                 else:
-                    p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h1_style)
+                    p = safe_paragraph(_md_inline_to_reportlab(text, is_template=is_template), h1_style)
                     p.keepWithNext = True
                     story.append(p)
             elif kind == "h2":
                 heading_style = h1_style if is_fm_major else h2_style
-                p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), heading_style)
+                p = safe_paragraph(_md_inline_to_reportlab(text, is_template=is_template), heading_style)
                 p.keepWithNext = True
                 story.append(p)
             elif kind == "h3":
-                p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h3_style)
+                p = safe_paragraph(_md_inline_to_reportlab(text, is_template=is_template), h3_style)
                 p.keepWithNext = True
                 story.append(p)
             continue
@@ -798,9 +923,9 @@ def _render_pdf_reportlab(
                     row_cells = []
                     style_to_use = table_cell_bold if row_idx == 0 else table_cell_style
                     for cell in r:
-                        row_cells.append(Paragraph(_md_inline_to_reportlab(cell, is_template=is_template), style_to_use))
+                        row_cells.append(safe_paragraph(_md_inline_to_reportlab(cell, is_template=is_template), style_to_use))
                     while len(row_cells) < num_cols:
-                        row_cells.append(Paragraph("", style_to_use))
+                        row_cells.append(safe_paragraph("", style_to_use))
                     table_data.append(row_cells)
                 t = Table(table_data, colWidths=[col_width] * num_cols, repeatRows=1 if is_template else 0)
                 if is_template:
@@ -834,10 +959,10 @@ def _render_pdf_reportlab(
                 story.append(t)
                 story.append(Spacer(1, 8))
         elif kind == "bullet":
-            story.append(Paragraph("&bull; " + _md_inline_to_reportlab(text, is_template=is_template), bullet_style))
+            story.append(safe_paragraph("&bull; " + _md_inline_to_reportlab(text, is_template=is_template), bullet_style))
         elif kind == "number":
             num_str = block.get("num", "1")
-            story.append(Paragraph(f"{num_str}. " + _md_inline_to_reportlab(text, is_template=is_template), bullet_style))
+            story.append(safe_paragraph(f"{num_str}. " + _md_inline_to_reportlab(text, is_template=is_template), bullet_style))
         else:
             if in_title_page:
                 cleaned_text = text.strip()
@@ -860,16 +985,16 @@ def _render_pdf_reportlab(
                     prev_was_guide = False
 
                 if cleaned_text.startswith("**") and cleaned_text.endswith("**"):
-                    story.append(Paragraph(_md_inline_to_reportlab(cleaned_text, is_template=True), title_page_bold_style))
+                    story.append(safe_paragraph(_md_inline_to_reportlab(cleaned_text, is_template=True), title_page_bold_style))
                 else:
-                    story.append(Paragraph(_md_inline_to_reportlab(cleaned_text, is_template=True), title_page_text_style))
+                    story.append(safe_paragraph(_md_inline_to_reportlab(cleaned_text, is_template=True), title_page_text_style))
             else:
                 cleaned_diag = re.sub(r"^\s*>\s*", "", text).strip()
                 if cleaned_diag.startswith("[Insert diagram here"):
-                    diag_p = Paragraph(_md_inline_to_reportlab(cleaned_diag, is_template=is_template), diagram_box_style)
+                    diag_p = safe_paragraph(_md_inline_to_reportlab(cleaned_diag, is_template=is_template), diagram_box_style)
                     if idx + 1 < len(blocks) and re.match(r"^(?:Fig\.|Figure)\s+\d+\.\d+", blocks[idx + 1].get("text", ""), re.IGNORECASE):
                         cap_text = blocks[idx + 1].get("text", "")
-                        cap_p = Paragraph(_md_inline_to_reportlab(cap_text, is_template=is_template), caption_style)
+                        cap_p = safe_paragraph(_md_inline_to_reportlab(cap_text, is_template=is_template), caption_style)
                         if story:
                             setattr(story[-1], "keepWithNext", True)
                         story.append(KeepTogether([diag_p, cap_p]))
@@ -880,10 +1005,10 @@ def _render_pdf_reportlab(
                         diag_p.keepWithNext = True
                         story.append(diag_p)
                 elif re.match(r"^Table\s+\d+\.\d+", text, re.IGNORECASE):
-                    tbl_cap_p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style)
+                    tbl_cap_p = safe_paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style)
                     if idx + 1 < len(blocks) and blocks[idx + 1].get("text", "").strip() == "[Insert table here]":
                         holder_text = blocks[idx + 1].get("text", "").strip()
-                        holder_p = Paragraph(_md_inline_to_reportlab(holder_text, is_template=is_template), diagram_box_style)
+                        holder_p = safe_paragraph(_md_inline_to_reportlab(holder_text, is_template=is_template), diagram_box_style)
                         if story:
                             setattr(story[-1], "keepWithNext", True)
                         story.append(KeepTogether([tbl_cap_p, holder_p]))
@@ -894,17 +1019,17 @@ def _render_pdf_reportlab(
                         tbl_cap_p.keepWithNext = True
                         story.append(tbl_cap_p)
                 elif re.match(r"^(?:Fig\.|Figure)\s+\d+\.\d+", text, re.IGNORECASE):
-                    cap_p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style)
+                    cap_p = safe_paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style)
                     story.append(cap_p)
                 elif in_references:
-                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), references_entry_style))
+                    story.append(safe_paragraph(_md_inline_to_reportlab(text, is_template=is_template), references_entry_style))
                 else:
-                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), body_style))
+                    story.append(safe_paragraph(_md_inline_to_reportlab(text, is_template=is_template), body_style))
 
     # Sources section (only if not already in template body)
     if structured and not (is_template and "references" in body_md.lower()):
         story.append(Spacer(1, 8))
-        story.append(Paragraph("Sources", h2_style))
+        story.append(safe_paragraph("Sources", h2_style))
         for s in structured:
             s_title = _md_inline_to_reportlab(s["title"])
             s_num = s["number"]
@@ -915,11 +1040,11 @@ def _render_pdf_reportlab(
             src_header = f"<b>[{s_num}]</b> {s_title}"
             if s_domain:
                 src_header += f' <font color="#9ca3af">&mdash; {html.escape(s_domain)}</font>'
-            story.append(Paragraph(src_header, source_title_style))
+            story.append(safe_paragraph(src_header, source_title_style))
             if s_url:
-                story.append(Paragraph(f'<a href="{s_url}" color="#0d9488">{html.escape(s_url)}</a>', source_url_style))
+                story.append(safe_paragraph(f'<a href="{s_url}" color="#0d9488">{html.escape(s_url)}</a>', source_url_style))
             if s_desc:
-                story.append(Paragraph(s_desc, source_desc_style))
+                story.append(safe_paragraph(s_desc, source_desc_style))
 
     NumberedCanvas._chapter1_page = None
     if is_template:
@@ -1289,6 +1414,9 @@ def markdown_to_docx(
         document.add_paragraph()
 
     # --- body ---
+    if is_template:
+        body_md = _normalize_college_title_page_markdown(body_md)
+
     body_items = _body_blocks(body_md)
     in_title_page = is_template
     next_is_guide = False
@@ -1298,6 +1426,17 @@ def markdown_to_docx(
         payload = block.get("text", "")
         if kind == "table":
             _add_table(document, block["rows"])
+        elif kind == "code":
+            for c_line in payload.splitlines():
+                c_clean = c_line.strip()
+                if c_clean:
+                    p = document.add_paragraph()
+                    p.paragraph_format.left_indent = Inches(0.4)
+                    p.paragraph_format.space_after = Pt(2)
+                    p.paragraph_format.line_spacing = 1.15
+                    run = p.add_run(c_clean)
+                    run.font.name = "Consolas"
+                    run.font.size = Pt(9.5)
         elif kind in ("h1", "h2", "h3"):
             norm_payload = payload.lower()
             is_fm_break = is_template and any(
@@ -1431,48 +1570,63 @@ def markdown_to_docx(
     return buffer.getvalue()
 
 
-_BOLD = re.compile(r"\*\*(.+?)\*\*")
-_CITE = re.compile(r"\[(\d{1,3})\]")
-
-
-def _add_inline(paragraph, text: str, is_template: bool = False) -> None:
-    """Add text, keeping **bold** runs and rendering [n] as a superscript."""
+def _add_inline(paragraph: Any, text: str, is_template: bool = False) -> None:
+    """Add text, safely handling code spans, bold, italic, and citations with unmatched marker safeguards."""
     from docx.shared import Pt, RGBColor
 
-    text = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1 (\2)", text)
-    position = 0
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1 (\2)", text or "")
 
-    def emit(chunk: str, bold: bool = False) -> None:
-        cursor = 0
-        for cite in _CITE.finditer(chunk):
-            if cite.start() > cursor:
-                run = paragraph.add_run(chunk[cursor : cite.start()])
-                run.bold = bold
-                if is_template:
-                    run.font.name = "Times New Roman"
-                    run.font.size = Pt(12)
-            run = paragraph.add_run(cite.group(1))
-            run.bold = bold
+    pattern = re.compile(
+        r"(?P<code>`[^`\n]+`)|"
+        r"(?P<cite>\[\d{1,3}\])|"
+        r"(?P<bold>\*\*[^\*\n]+?\*\*)|"
+        r"(?P<italic>\*[^\*\n]+?\*)"
+    )
+
+    pos = 0
+    for m in pattern.finditer(text):
+        start, end = m.span()
+        if start > pos:
+            run = paragraph.add_run(text[pos:start])
+            if is_template:
+                run.font.name = "Times New Roman"
+                run.font.size = Pt(12)
+
+        if m.group("code"):
+            code_str = m.group("code")[1:-1]
+            run = paragraph.add_run(code_str)
+            run.font.name = "Consolas"
+            run.font.size = Pt(10)
+        elif m.group("cite"):
+            num_str = m.group("cite")[1:-1]
+            run = paragraph.add_run(num_str)
             run.font.superscript = True
             run.font.size = Pt(8)
             run.font.color.rgb = RGBColor(0x4F, 0x46, 0xE5)
             if is_template:
                 run.font.name = "Times New Roman"
-            cursor = cite.end()
-        if cursor < len(chunk):
-            run = paragraph.add_run(chunk[cursor:])
-            run.bold = bold
+        elif m.group("bold"):
+            bold_str = m.group("bold")[2:-2]
+            run = paragraph.add_run(bold_str)
+            run.bold = True
+            if is_template:
+                run.font.name = "Times New Roman"
+                run.font.size = Pt(12)
+        elif m.group("italic"):
+            italic_str = m.group("italic")[1:-1]
+            run = paragraph.add_run(italic_str)
+            run.italic = True
             if is_template:
                 run.font.name = "Times New Roman"
                 run.font.size = Pt(12)
 
-    for match in _BOLD.finditer(text):
-        if match.start() > position:
-            emit(text[position : match.start()])
-        emit(match.group(1), bold=True)
-        position = match.end()
-    if position < len(text):
-        emit(text[position:])
+        pos = end
+
+    if pos < len(text):
+        run = paragraph.add_run(text[pos:])
+        if is_template:
+            run.font.name = "Times New Roman"
+            run.font.size = Pt(12)
 
 
 def _add_table(document, rows: list[list[str]]) -> None:
@@ -1519,10 +1673,12 @@ def _plain_blocks(markdown: str) -> list[str]:
     return blocks
 
 
-def _body_blocks(markdown: str) -> list[dict[str, str]]:
-    """Split markdown into headings, bullets and paragraphs for python-docx."""
-    blocks: list[dict[str, str]] = []
+def _body_blocks(markdown: str) -> list[dict[str, Any]]:
+    """Split markdown into headings, bullets, code blocks, tables and paragraphs."""
+    blocks: list[dict[str, Any]] = []
     paragraph: list[str] = []
+    in_code = False
+    code_lines: list[str] = []
 
     def flush() -> None:
         if paragraph:
@@ -1532,6 +1688,22 @@ def _body_blocks(markdown: str) -> list[dict[str, str]]:
     for raw_line in (markdown or "").splitlines():
         line = raw_line.rstrip()
         stripped = line.strip()
+
+        if stripped.startswith("```"):
+            if not in_code:
+                flush()
+                in_code = True
+                code_lines = []
+                continue
+            else:
+                in_code = False
+                blocks.append({"kind": "code", "text": "\n".join(code_lines)})
+                code_lines = []
+                continue
+
+        if in_code:
+            code_lines.append(raw_line)
+            continue
 
         if not stripped:
             flush()
@@ -1570,6 +1742,8 @@ def _body_blocks(markdown: str) -> list[dict[str, str]]:
             paragraph.append(stripped)
 
     flush()
+    if in_code and code_lines:
+        blocks.append({"kind": "code", "text": "\n".join(code_lines)})
     return [block for block in blocks if block.get("text") or block.get("rows")]
 
 

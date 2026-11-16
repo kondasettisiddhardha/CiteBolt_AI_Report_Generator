@@ -1453,9 +1453,11 @@ Numbered deployment steps:
         filtered_thin = filter_grounded_college_section("4.6 Database Design Overview", short_thin, facts, min_words=25)
         self.assertIn("[Add your Database Design Overview here.]", filtered_thin)
 
-        # B. List of Tables contains "Table 7.1 | Database tables"
+        # B. List of Tables contains "Table 7.1: Database tables" without pipe characters
         lot = format_front_matter_section("List of Tables", "Topic", {})
-        self.assertIn("| Table 7.1 | Database tables |", lot)
+        self.assertIn("Table 7.1", lot)
+        self.assertIn("Database tables", lot)
+        self.assertNotIn("|", lot)
 
     def test_item6_section_5_1_deduplication_and_8_5_8_6_placeholders(self):
         """Item 6: Section 5.1 has only one intro paragraph; 8.5 and 8.6 do not repeat 14 tests."""
@@ -1740,6 +1742,241 @@ Numbered deployment steps:
         sec_wrong_tbl = "The SQLite schema maintains 8 database tables."
         filtered_wrong_tbl = filter_grounded_college_section("5.4 Database Architecture", sec_wrong_tbl, facts)
         self.assertNotIn("8 database tables", filtered_wrong_tbl)
+
+    def test_task1_pdf_export_code_spans_with_asterisks(self):
+        """TASK 1 4(a): Sentence with `/api/auth/*`, `/api/runs/*`, `/api/templates/*` exports to PDF and contains `/api/auth/*`."""
+        md = (
+            "# College Report\n\n"
+            "## 10.1 API Access\n\n"
+            "The backend exposes endpoints under `/api/auth/*`, `/api/runs/*`, and `/api/templates/*` for operations.\n"
+        )
+        pdf_bytes = markdown_to_pdf(md, title="College Report", report_type="college")
+        self.assertTrue(len(pdf_bytes) > 2000)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        full_text = "".join(page.extract_text() or "" for page in reader.pages)
+        self.assertIn("/api/auth/*", full_text)
+        self.assertIn("/api/runs/*", full_text)
+        self.assertIn("/api/templates/*", full_text)
+
+    def test_task1_pdf_export_unmatched_markers(self):
+        """TASK 1 4(b): Paragraph with unmatched * and unmatched backtick exports cleanly."""
+        md = (
+            "# College Report\n\n"
+            "## 10.1 Edge Cases\n\n"
+            "This paragraph has an unmatched * asterisk and an unmatched ` backtick in prose.\n"
+        )
+        pdf_bytes = markdown_to_pdf(md, title="College Report", report_type="college")
+        self.assertTrue(len(pdf_bytes) > 2000)
+        docx_bytes = markdown_to_docx(md, title="College Report", report_type="college")
+        self.assertTrue(len(docx_bytes) > 2000)
+
+    def test_task1_pdf_export_xml_chars(self):
+        """TASK 1 4(c): Markdown paragraph with <, >, and & exports cleanly."""
+        md = (
+            "# College Report\n\n"
+            "## 10.1 XML Entities\n\n"
+            "Testing entities where x < y and y > z and apples & oranges are compared.\n"
+        )
+        pdf_bytes = markdown_to_pdf(md, title="College Report", report_type="college")
+        self.assertTrue(len(pdf_bytes) > 2000)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        full_text = "".join(page.extract_text() or "" for page in reader.pages)
+        self.assertIn("x < y", full_text)
+        self.assertIn("apples & oranges", full_text)
+
+    def test_task1_reexport_run_83bb845d(self):
+        """TASK 1 Item 5: Re-export run 83bb845df1ee4e3690d8e92125a78185 directly from DB to verify PDF and DOCX export work cleanly."""
+        import sqlite3
+        db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "reports.db"))
+        if not os.path.exists(db_path):
+            self.skipTest("reports.db not found")
+        con = sqlite3.connect(db_path)
+        row = con.execute("SELECT topic, report_type, report_markdown, sources_json FROM runs WHERE id LIKE '83bb845d%'").fetchone()
+        con.close()
+        if not row:
+            self.skipTest("Run 83bb845d not found in database")
+        topic, rtype, md, s_json = row
+        sources = json.loads(s_json) if s_json else []
+        pdf_bytes = markdown_to_pdf(md, topic=topic, report_type=rtype, sources=sources)
+        self.assertGreater(len(pdf_bytes), 10000)
+        docx_bytes = markdown_to_docx(md, topic=topic, report_type=rtype, sources=sources)
+        self.assertGreater(len(docx_bytes), 10000)
+
+    def test_task2_dynamic_lof_and_lot_only_from_actual_body_captions(self):
+        """TASK 2 Item 1: LOF and LOT built ONLY from captions actually present in final body text. No pipe characters, no ghost entries, no [Insert table here]."""
+        body_md = (
+            "# Chapter 1 Introduction\n\n"
+            "Some introduction.\n\n"
+            "# Chapter 4 System Design\n\n"
+            "[Insert diagram here: Fig. 4.1 - System Architecture]\n\n"
+            "Fig. 4.1: System Architecture\n\n"
+            "# Chapter 7 Software Implementation\n\n"
+            "Table 7.1: Database tables\n\n"
+            "| Table | Purpose |\n"
+            "| :--- | :--- |\n"
+            "| users | Accounts |\n\n"
+        )
+        from app.agents.section_engine import extract_captions_from_body, build_dynamic_lof_and_lot
+        figs, tbls = extract_captions_from_body(body_md)
+        self.assertEqual(len(figs), 1)
+        self.assertEqual(figs[0][0], "Fig. 4.1")
+        self.assertEqual(len(tbls), 1)
+        self.assertEqual(tbls[0][0], "Table 7.1")
+
+        lof, lot = build_dynamic_lof_and_lot(body_md)
+        self.assertIn("Fig. 4.1: System Architecture", lof)
+        self.assertNotIn("|", lof)
+        self.assertNotIn("[Insert diagram here", lof)
+        self.assertIn("Table 7.1: Database tables", lot)
+        self.assertNotIn("|", lot)
+        self.assertNotIn("Table 1.1", lot)
+        self.assertNotIn("[Insert table here]", lot)
+
+    def test_task2_front_matter_shared_fields_and_title_casing(self):
+        """TASK 2 Item 2: Title page, certificate, and acknowledgements read the SAME fields. University title-cased when lowercase, never prints asterisks. Restores DOCX labels."""
+        fm = {
+            "projectTitle": "Test Project",
+            "degree": "",  # blank -> [Degree]
+            "department": "",  # blank -> [Department Name]
+            "university": "sandip university",  # lowercase -> Sandip University
+            "guide": "dr. jane doe",
+            "academicYear": "2024-2025",
+        }
+        tp = format_front_matter_section("Title Page", "Test Project", fm)
+        self.assertIn("A PROJECT REPORT", tp)
+        self.assertIn("Submitted in partial fulfilment of the requirements for the award of the degree of", tp)
+        self.assertIn("**[Degree]**", tp)
+        self.assertIn("Submitted by", tp)
+        self.assertIn("Under the guidance of", tp)
+        self.assertIn("Department: [Department Name]", tp)
+        self.assertIn("University: Sandip University", tp)
+        self.assertNotIn("sandip university", tp)
+
+        cert = format_front_matter_section("Certificate", "Test Project", fm)
+        self.assertIn("Sandip University", cert)
+        self.assertNotIn("*sandip university*", cert.lower())
+        self.assertIn("[Department Name], Sandip University", cert)
+
+        ack = format_front_matter_section("Acknowledgements", "Test Project", fm)
+        self.assertIn("Sandip University", ack)
+        self.assertIn("Department of [Department Name]", ack)
+
+    def test_task2_section_1_5_deterministic_roadmap(self):
+        """TASK 2 Item 3: Section 1.5 roadmap contains exact 11 chapters from real chapter titles."""
+        from app.agents.section_engine import build_deterministic_roadmap_section
+        roadmap = build_deterministic_roadmap_section("1.5 Report Organization")
+        expected_chapters = [
+            "Chapter 2 (Literature Survey)",
+            "Chapter 3 (Software Requirements Specification)",
+            "Chapter 4 (System Design)",
+            "Chapter 5 (Technical Specifications)",
+            "Chapter 6 (Project Planning & Scheduling)",
+            "Chapter 7 (Software Implementation)",
+            "Chapter 8 (Software Testing)",
+            "Chapter 9 (Result and Discussion)",
+            "Chapter 10 (Deployment and Maintenance)",
+            "Chapter 11 (Conclusion and Future Scope)",
+        ]
+        for ch in expected_chapters:
+            self.assertIn(ch, roadmap)
+
+    def test_task2_whitelist_filter_drops_banned_terms(self):
+        """TASK 2 Item 4: Whitelist filter drops sentences with config.yaml, returns 429, CI runs, hashes, etc."""
+        facts = "Project Facts: LangGraph multi-agent pipeline with SQLite."
+        banned_sentences = [
+            ("3.2 Requirements", "The application loads credentials from `config.yaml` at startup."),
+            ("3.2 Requirements", "The system returns 429 when rate limits are exceeded."),
+            ("6.1 Planning", "Automated CI runs are configured for pull request validation."),
+            ("7.2 Security", "The system verifies user password hashes upon authentication."),
+            ("7.2 Security", "State synchronization produces state-diff structures for patching."),
+            ("7.2 Security", "The report compiler applies markdown patches across sections."),
+            ("6.1 Planning", "The team completed the work in Sprint 1 and Sprint 2."),
+            ("4.3 Architecture", "Custom CORS middleware intercepts all incoming HTTP requests."),
+            ("8.1 Testing", "Comprehensive load testing is planned for the subsequent release phase."),
+            ("1.1 Domain", "The research lab evaluated multiple grant proposals during funding."),
+            ("6.1 Planning", "Faculty advisors reviewed the project milestone deliveries."),
+        ]
+        for sec_name, sent in banned_sentences:
+            filtered = filter_grounded_college_section(sec_name, sent, facts)
+            self.assertNotIn(sent, filtered, f"Sentence '{sent}' should have been dropped by whitelist filter")
+
+    def test_task2_test_claims_8_2_8_5_8_6(self):
+        """TASK 2 Item 5: In 8.2, 8.5, 8.6, drop claims of testing endpoint contracts, status codes, JWT cookies, OTP delivery, or database state."""
+        facts = "Project Facts: 14 unit tests with a mocked LLM and mocked search for the college report mode."
+        test_sentences = [
+            ("8.2 Test Objectives", "The test suite validates endpoint contracts across API handlers."),
+            ("8.2 Test Objectives", "Tests verify HTTP status codes and error responses."),
+            ("8.5 Test Cases", "Test Case 1 checks JWT cookies for session authorization."),
+            ("8.5 Test Cases", "Test Case 2 asserts OTP delivery through Gmail SMTP."),
+            ("8.6 Test Plan", "The test execution asserts database state transitions in SQLite."),
+        ]
+        for sec_name, sent in test_sentences:
+            filtered = filter_grounded_college_section(sec_name, sent, facts)
+            self.assertNotIn(sent, filtered, f"Sentence '{sent}' should have been dropped")
+
+    def test_task2_sections_10_5_10_6_10_7_match_headings(self):
+        """TASK 2 Item 6: 10.5 manual restart; 10.6 copy SQLite file; 10.7 external API limits and local-only deployment."""
+        facts = "Project Facts: local deployment with FastAPI, Vite, SQLite."
+        sec_105 = filter_grounded_college_section("10.5 Maintenance", "", facts)
+        self.assertIn("manual process restarts", sec_105.lower())
+        self.assertNotIn("backup", sec_105.lower())
+
+        sec_106 = filter_grounded_college_section("10.6 Backup and Recovery", "", facts)
+        self.assertIn("filesystem copies of the sqlite database file", sec_106.lower())
+
+        sec_107 = filter_grounded_college_section("10.7 Challenges During Deployment", "", facts)
+        self.assertIn("external api rate limits", sec_107.lower())
+        self.assertIn("local-only deployment", sec_107.lower())
+
+    def test_task2_code_blocks_and_10_3_installation(self):
+        """TASK 2 Item 7: Code blocks render fenced code as code block in PDF and DOCX; 10.3 includes backend and frontend commands."""
+        facts = "Project Facts: local deployment."
+        from app.agents.section_engine import build_deterministic_installation_section
+        sec_103 = build_deterministic_installation_section("10.3 Installation Process")
+        self.assertIn("```bash", sec_103)
+        self.assertIn("cd backend", sec_103)
+        self.assertIn("uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload", sec_103)
+        self.assertIn("cd frontend", sec_103)
+        self.assertIn("npm install", sec_103)
+        self.assertIn("npm run dev", sec_103)
+
+        pdf_bytes = markdown_to_pdf(f"# Report\n\n{sec_103}", title="Report", report_type="college")
+        self.assertGreater(len(pdf_bytes), 2000)
+        docx_bytes = markdown_to_docx(f"# Report\n\n{sec_103}", title="Report", report_type="college")
+        self.assertGreater(len(docx_bytes), 2000)
+
+    def test_task2_drop_truncated_sentences(self):
+        """TASK 2 Item 8: Drop truncated sentences ending in 'launched via', 'such as', 'including' or without terminal punctuation."""
+        facts = "Project Facts: FastAPI backend and React frontend."
+        trunc1 = "The backend services are launched via"
+        trunc2 = "The architecture integrates several core components including"
+        trunc3 = "This sentence is missing terminal punctuation"
+        valid = "The application architecture utilizes a FastAPI backend and a React frontend."
+
+        md = f"## 5.5 Backend Implementation\n\n{valid}\n\n{trunc1}\n\n{trunc2}\n\n{trunc3}"
+        filtered = filter_grounded_college_section("5.5 Backend Implementation", md, facts)
+        self.assertIn(valid, filtered)
+        self.assertNotIn("launched via", filtered)
+        self.assertNotIn("core components including", filtered)
+        self.assertNotIn("terminal punctuation", filtered)
+
+    def test_task2_remove_glued_chapter_summary_from_5_8(self):
+        """TASK 2 Item 9: Remove glued **Chapter Summary** paragraphs from 5.8."""
+        facts = "Project Facts: FastAPI backend."
+        md = (
+            "## 5.8 Summary\n\n"
+            "**Chapter Summary** This chapter outlined the technical specifications governing the frontend, backend, and data persistence layers."
+        )
+        filtered = filter_grounded_college_section("5.8 Summary", md, facts)
+        self.assertNotIn("**Chapter Summary**", filtered)
+        self.assertIn("This chapter outlined the technical specifications", filtered)
+
+    def test_task2_team_structure_single_student(self):
+        """TASK 2 Item 10: If team size is 1, write 'The project was developed by a single student.' No placeholders for external contributors."""
+        facts = "Project Facts: developed by one student."
+        filtered = filter_grounded_college_section("6.6 Team Structure", "Some team text", facts)
+        self.assertIn("The project was developed by a single student.", filtered)
+        self.assertNotIn("[Add", filtered)
 
 
 if __name__ == "__main__":

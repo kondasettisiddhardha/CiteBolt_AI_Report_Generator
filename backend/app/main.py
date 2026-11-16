@@ -629,32 +629,36 @@ def export_run(
         sources = []
 
     report_title = run.title or run.topic
-    if format == "pdf":
-        content = markdown_to_pdf(
-            run.report_markdown,
-            run.topic,
-            sources,
-            title=report_title,
-            report_type=run.report_type or "auto",
-        )
-        media = "application/pdf"
-    elif format == "docx":
-        content = markdown_to_docx(
-            run.report_markdown,
-            report_title,
-            sources,
-            topic=run.topic,
-            report_type=run.report_type or "auto",
-        )
-        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    else:
-        md_content = run.report_markdown or ""
-        if sources and not re.search(r"\n#{1,3}\s*(Sources|References)\b", md_content, re.IGNORECASE):
-            md_content = md_content.rstrip() + "\n\n" + build_sources_markdown(sources)
-        if not md_content.lstrip().startswith("# "):
-            md_content = f"# {report_title}\n\n{md_content}"
-        content = md_content.encode("utf-8")
-        media = "text/markdown; charset=utf-8"
+    try:
+        if format == "pdf":
+            content = markdown_to_pdf(
+                run.report_markdown,
+                run.topic,
+                sources,
+                title=report_title,
+                report_type=run.report_type or "auto",
+            )
+            media = "application/pdf"
+        elif format == "docx":
+            content = markdown_to_docx(
+                run.report_markdown,
+                report_title,
+                sources,
+                topic=run.topic,
+                report_type=run.report_type or "auto",
+            )
+            media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            md_content = run.report_markdown or ""
+            if sources and not re.search(r"\n#{1,3}\s*(Sources|References)\b", md_content, re.IGNORECASE):
+                md_content = md_content.rstrip() + "\n\n" + build_sources_markdown(sources)
+            if not md_content.lstrip().startswith("# "):
+                md_content = f"# {report_title}\n\n{md_content}"
+            content = md_content.encode("utf-8")
+            media = "text/markdown; charset=utf-8"
+    except Exception as exc:
+        logger.error("Export failed for run %s (format=%s): %s", run_id, format, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Export failed: {exc}") from exc
 
     stem = _slug(report_title or f"report-{run.id[:8]}")
     return Response(

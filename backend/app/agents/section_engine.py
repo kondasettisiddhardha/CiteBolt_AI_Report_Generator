@@ -147,6 +147,109 @@ Table 7.1: Database tables
 {table_rows}"""
 
 
+def build_deterministic_roadmap_section(sec_title: str, heading_prefix: str = "###") -> str:
+    lines = [
+        f"{heading_prefix} {sec_title}",
+        "",
+        "The remainder of this report is organized as follows:",
+        "",
+        "- **Chapter 2 (Literature Survey)** examines existing research, methodologies, and related systems in the domain, highlighting the technical gaps addressed by this work.",
+        "- **Chapter 3 (Software Requirements Specification)** details the functional requirements, external interface requirements, and non-functional requirements including performance and security constraints.",
+        "- **Chapter 4 (System Design)** presents the high-level and low-level architectural design, component interactions, and data model design.",
+        "- **Chapter 5 (Technical Specifications)** outlines the core technologies, backend and frontend frameworks, persistence layer, and third-party integrations utilized.",
+        "- **Chapter 6 (Project Planning & Scheduling)** describes the project planning, work breakdown structure, timeline milestones, and team responsibilities.",
+        "- **Chapter 7 (Software Implementation)** details the implementation of core modules, backend services, API endpoints, and user interface workflows.",
+        "- **Chapter 8 (Software Testing)** documents the testing strategy, test suite implementation, test cases, and quality verification methodologies.",
+        "- **Chapter 9 (Result and Discussion)** presents the system evaluation, outcomes, and comparative analysis with existing solutions.",
+        "- **Chapter 10 (Deployment and Maintenance)** outlines the deployment procedures, environment configuration, backup procedures, and operational constraints.",
+        "- **Chapter 11 (Conclusion and Future Scope)** summarizes the project achievements, contributions, and avenues for future technical enhancement.",
+    ]
+    return "\n".join(lines)
+
+
+def build_deterministic_installation_section(sec_title: str, heading_prefix: str = "###") -> str:
+    lines = [
+        f"{heading_prefix} {sec_title}",
+        "",
+        "The installation process requires configuring the backend Python runtime and the frontend Node.js environment. First, initialize and launch the backend service:",
+        "",
+        "```bash",
+        "cd backend",
+        "python -m venv .venv",
+        ".venv\\Scripts\\activate",
+        "pip install -r requirements.txt",
+        "uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload",
+        "```",
+        "",
+        "Next, in a separate terminal, install the frontend packages and start the Vite development server:",
+        "",
+        "```bash",
+        "cd frontend",
+        "npm install",
+        "npm run dev",
+        "```",
+        "",
+        "Once both servers are running, the application can be accessed via a web browser at `http://localhost:5173`.",
+    ]
+    return "\n".join(lines)
+
+
+def extract_captions_from_body(body_md: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Extract (label, title) for all Figures and Tables actually present in body text from Chapter 1 onwards."""
+    figs: list[tuple[str, str]] = []
+    tbls: list[tuple[str, str]] = []
+    seen_figs: set[str] = set()
+    seen_tbls: set[str] = set()
+
+    m_ch1 = re.search(r"(?:^|\n)(#\s*Chapter\s+1\b)", body_md, re.IGNORECASE)
+    search_text = body_md[m_ch1.start(1):] if m_ch1 else body_md
+
+    for line in search_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("|") or stripped.startswith(">"):
+            continue
+        # Check Figure
+        fig_m = re.match(r"^(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+(.*)", stripped, re.IGNORECASE)
+        if fig_m and not stripped.lower().startswith(("as shown", "refer to", "in fig", "see fig")):
+            label = f"Fig. {fig_m.group(1)}"
+            title = fig_m.group(2).strip().strip("[]–- ")
+            if label not in seen_figs and title and title.lower() not in ("insert diagram here",):
+                seen_figs.add(label)
+                figs.append((label, title))
+            continue
+        # Check Table
+        tbl_m = re.match(r"^Table\s+(\d+\.\d+)[:\s\-]+(.*)", stripped, re.IGNORECASE)
+        if tbl_m:
+            label = f"Table {tbl_m.group(1)}"
+            title = tbl_m.group(2).strip().strip("[]–- ")
+            if label not in seen_tbls and title and not title.lower().startswith("no."):
+                seen_tbls.add(label)
+                tbls.append((label, title))
+            continue
+    return figs, tbls
+
+
+def build_dynamic_lof_and_lot(body_md: str) -> tuple[str, str]:
+    figs, tbls = extract_captions_from_body(body_md)
+    if figs:
+        lof_lines = ["## List of Figures\n"]
+        for lbl, title in figs:
+            lof_lines.append(f"{lbl}: {title}")
+        lof_text = "\n\n".join(lof_lines)
+    else:
+        lof_text = "## List of Figures\n\n*(No figures in this report)*"
+
+    if tbls:
+        lot_lines = ["## List of Tables\n"]
+        for lbl, title in tbls:
+            lot_lines.append(f"{lbl}: {title}")
+        lot_text = "\n\n".join(lot_lines)
+    else:
+        lot_text = "## List of Tables\n\n*(No tables in this report)*"
+
+    return lof_text, lot_text
+
+
 def extract_domain_and_project(topic: str, front_matter: dict[str, Any] | None = None) -> tuple[str, str]:
     """Derive clean Domain and Project names from topic and front_matter."""
     fm = front_matter or {}
@@ -363,7 +466,15 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
     - Table caption followed by '[Insert table here]'.
     - Splits lines where multiple captions were merged into one.
     """
-    raw_lines = md.split("\n")
+    m_ch1 = re.search(r"(?:^|\n)(#\s*Chapter\s+1\b)", md, re.IGNORECASE)
+    if m_ch1:
+        front_matter_part = md[:m_ch1.start(1)]
+        body_part = md[m_ch1.start(1):]
+    else:
+        front_matter_part = ""
+        body_part = md
+
+    raw_lines = body_part.split("\n")
     split_lines: list[str] = []
     for line in raw_lines:
         stripped = line.strip()
@@ -496,7 +607,7 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
 
         out_lines.append(line)
 
-    res = "\n".join(out_lines)
+    res = (front_matter_part + "\n".join(out_lines)).strip()
     res = re.sub(r"\n{3,}", "\n\n", res)
     return res
 
@@ -1057,13 +1168,41 @@ def filter_grounded_college_section(
     apply_whitelist = (actual_ch_num >= 3)
     duration_blank = "not specified" in facts_lower or "blank" in facts_lower or "project duration" not in facts_lower
 
+    # Deterministic Roadmap for Section 1.5 (Task 2 Item 3)
+    if re.search(r"^1\.5\b", sec_title):
+        return build_deterministic_roadmap_section(sec_title, heading_prefix)
+
     # Deterministic Data Design for Section 4.6 (Item 6)
     if re.search(r"^4\.6\s+data\s+design\b", sec_title, re.IGNORECASE) or norm_sec == "4.6 data design":
         return build_deterministic_data_design_section(sec_title, heading_prefix)
 
+    # 6.6 Team Structure: if team size is 1, single student (Task 2 Item 10)
+    if re.search(r"^6\.6\b", sec_title) or (actual_ch_num == 6 and any(k in norm_sec for k in ["team structure", "team organization", "team roles"])):
+        return f"{heading_prefix} {sec_title}\n\nThe project was developed by a single student."
+
     # Deterministic Data Dictionary for Section 7.3 (Item 5 / 8)
     if re.search(r"^7\.3\b", sec_title) or (actual_ch_num == 7 and "data dictionary" in norm_sec):
         return build_deterministic_data_dictionary_section(sec_title, heading_prefix)
+
+    # Deterministic Installation for Section 10.3 (Task 2 Item 7)
+    if re.search(r"^10\.3\b", sec_title):
+        return build_deterministic_installation_section(sec_title, heading_prefix)
+
+    # Sections 10.5, 10.6, 10.7 matching headings (Task 2 Item 6)
+    if re.search(r"^10\.5\b", sec_title):
+        return f"""{heading_prefix} {sec_title}
+
+System maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
+
+    if re.search(r"^10\.6\b", sec_title):
+        return f"""{heading_prefix} {sec_title}
+
+Database backup and recovery is conducted by creating direct filesystem copies of the SQLite database file (`reports.db`). In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring ACID transaction integrity."""
+
+    if re.search(r"^10\.7\b", sec_title):
+        return f"""{heading_prefix} {sec_title}
+
+Deployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
 
     if not sec_md:
         return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
@@ -1158,6 +1297,18 @@ def filter_grounded_college_section(
                 ]):
                     continue
 
+            # Whitelist filter: drop sentences containing banned terms unless in facts (Task 2 Item 4)
+            banned_terms = [
+                "config.yaml", "returns 429", "return 429", "ci runs", "ci run",
+                "hashes", "state-diff", "markdown patches", "markdown patch",
+                "sprint", "sprints", "middleware", "grant proposals", "grant proposal",
+                "faculty advisors", "faculty advisor",
+            ]
+            if any(bt in s_low for bt in banned_terms if bt not in facts_lower):
+                continue
+            if re.search(r"\bload\s+testing\b", s_low) and "load test" not in facts_lower:
+                continue
+
             # 14 tests: only what fact sheet says (Item 2)
             if any(k in s_low for k in ["14 tests", "14 unit tests", "unit test suite"]):
                 forbidden_test_claims = [
@@ -1168,14 +1319,19 @@ def filter_grounded_college_section(
                 if any(fc in s_low for fc in forbidden_test_claims if fc not in positive_facts.lower()):
                     continue
 
-            # In 8.2, 8.5, 9.5: never say tests cover OTP, resume, etc. and never say all tests passed (Item 2)
-            if any(k in norm_sec for k in ["8.2", "8.5", "9.5", "test objective", "test case", "evaluation result"]):
+            # In 8.2, 8.5, 8.6, 9.5: tests may only say 14 tests run college report mode with mocked LLM and Tavily (Task 2 Item 5)
+            # Drop claims of testing endpoint contracts, status codes, JWT cookies, OTP delivery, or database state.
+            if any(k in norm_sec for k in ["8.2", "8.5", "8.6", "9.5", "test objective", "test case", "test plan", "evaluation result"]):
                 if any(k in s_low for k in ["all tests passed", "all 14 tests passed", "passed successfully"]):
                     continue
-                if any(k in s_low for k in [
+                forbidden_test_claims_8 = [
+                    "endpoint contract", "endpoint contracts", "status code", "status codes",
+                    "jwt cookie", "jwt cookies", "otp delivery", "database state",
+                    "cookie", "cookies", "contract test", "contract tests",
                     "otp", "resume", "endpoints", "endpoint reliability", "template selection",
                     "citation numbering", "placeholder insertion", "run-state persistence"
-                ] if k not in positive_facts.lower()):
+                ]
+                if any(fc in s_low for fc in forbidden_test_claims_8 if fc not in positive_facts.lower()):
                     continue
 
             # Sections 8.5 & 8.6 repetition: do not repeat 14 tests sentence from 8.1 / 8.3
@@ -1323,8 +1479,31 @@ def filter_grounded_college_section(
         result = result.replace("../frontend", "frontend")
         result = result.replace("cd ../frontend", "cd frontend")
 
+    # Remove glued **Chapter Summary** paragraphs from 5.8 (Task 2 Item 9)
+    if "5.8" in norm_sec or (actual_ch_num == 5 and "summary" in norm_sec):
+        result = re.sub(r"\*\*Chapter Summary\*\*\s*", "", result, flags=re.IGNORECASE)
+
     # Clean dangling fragments and normalize placeholders
     result = clean_dangling_fragments_and_placeholders(result)
+
+    # Drop truncated paragraphs: ending without terminal punctuation or ending in 'launched via', 'such as', 'including' (Task 2 Item 8)
+    cleaned_paragraphs = []
+    dangling_ends = ["launched via", "such as", "including", "for example", "e.g.", "via", "such as:", "with", "consisting of", "based on"]
+    for p in result.split("\n\n"):
+        p_str = p.strip()
+        if not p_str:
+            continue
+        if p_str.startswith("#") or p_str.startswith("[") or p_str.startswith("|") or p_str.startswith("```"):
+            cleaned_paragraphs.append(p_str)
+            continue
+        p_low = p_str.lower().rstrip(" \t\r\n")
+        if any(p_low.endswith(de) for de in dangling_ends):
+            continue
+        if not re.search(r"[\.!?:\'\"\)]\s*$", p_str) and not p_str.endswith("]"):
+            continue
+        cleaned_paragraphs.append(p_str)
+
+    result = "\n\n".join(cleaned_paragraphs)
 
     text_without_headings = re.sub(r"^#+.*", "", result, flags=re.MULTILINE).strip()
     text_without_placeholders = re.sub(r"\[(?:Insert|Add)[^\]]+\]", "", text_without_headings).strip()
@@ -1371,24 +1550,24 @@ The primary objectives of the project are defined as follows:
         if not has_body_text or words_remaining < 25:
             return f"{heading_prefix} {sec_title}\n\n[Add your test results here.]"
 
-    # Sections 10.5 to 10.8: produce short grounded text from facts (local only, manual restarts, SQLite file, no CI/CD) (Item 6)
+    # Sections 10.5 to 10.8: match exact headings (Task 2 Item 6)
     if re.search(r"^10\.5\b", sec_title):
         if not has_body_text or words_remaining < 25:
             return f"""{heading_prefix} {sec_title}
 
-Data backup in the local deployment environment is managed by creating filesystem copies of the SQLite database file. Operational maintenance utilizes manual process restarts when necessary, without automated clustering or distributed failover mechanisms."""
+System maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
 
     if re.search(r"^10\.6\b", sec_title):
         if not has_body_text or words_remaining < 25:
             return f"""{heading_prefix} {sec_title}
 
-System monitoring relies on standard console log outputs provided by Uvicorn and FastAPI during runtime. Database integrity is preserved through SQLite ACID transaction guarantees, with manual inspection of service execution during development."""
+Database backup and recovery is conducted by creating direct filesystem copies of the SQLite database file (`reports.db`). In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring ACID transaction integrity."""
 
     if re.search(r"^10\.7\b", sec_title):
         if not has_body_text or words_remaining < 25:
             return f"""{heading_prefix} {sec_title}
 
-The platform is maintained under local Git version control without automated CI/CD deployment pipelines or containerization workflows. Verification is conducted by running the pytest suite manually prior to updates."""
+Deployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
 
     if re.search(r"^10\.8\b", sec_title) or (actual_ch_num == 10 and "summary" in norm_sec):
         if not has_body_text or words_remaining < 25:
@@ -1398,7 +1577,7 @@ The CiteBolt system is deployed locally on a single machine utilizing a FastAPI 
 
     # Summary sections (CRITICAL): Do not use placeholders for Summary sections (Item 6)
     if "summary" in norm_sec and not any(k in norm_sec for k in ["executive summary", "abstract"]):
-        if not has_body_text or words_remaining < 25:
+        if not has_body_text or words_remaining < 12:
             return f"""{heading_prefix} {sec_title}
 
 This chapter synthesized the technical specifications, requirements, and design considerations governing the CiteBolt platform. The established design and implementation parameters ensure robust execution across the multi-agent workflow. The findings and models developed here serve as the baseline for system implementation and testing."""
@@ -1434,29 +1613,30 @@ def format_front_matter_section(
     if not month_year_val:
         month_year_val = now.strftime("%B %Y")
 
+    degree_raw = fm.get("degree", "").strip()
+    degree_disp = degree_raw if degree_raw else "[Degree]"
+
     dept_raw = fm.get("department", "").strip()
-    dept = smart_title(dept_raw) if dept_raw else ""
+    if dept_raw:
+        dept_disp = smart_title(dept_raw) if dept_raw.islower() else dept_raw
+    else:
+        dept_disp = "[Department Name]"
+
     univ_raw = fm.get("university", "").strip()
-    univ = univ_raw if univ_raw else ""
-    guide = smart_title(fm.get("guide", "").strip())
+    if univ_raw:
+        univ_disp = smart_title(univ_raw) if univ_raw.islower() else univ_raw
+    else:
+        univ_disp = "[University Name]"
+
+    guide_raw = fm.get("guide", "").strip()
+    guide_disp = smart_title(guide_raw) if guide_raw else "[Project Guide]"
+
     coord = smart_title(fm.get("coordinator", "").strip())
     hod = smart_title(fm.get("hod", "").strip())
     dean = smart_title(fm.get("dean", "").strip())
     members = fm.get("teamMembers") or []
 
     if "title page" in norm:
-        degree = fm.get("degree", "").strip() or "[Degree]"
-        if univ_raw:
-            if univ_raw.islower():
-                univ_disp = smart_title(univ_raw)
-            else:
-                univ_disp = univ_raw
-        else:
-            univ_disp = "[University Name]"
-
-        dept_disp = dept if dept else "[Department Name]"
-        guide_disp = guide if guide else "[Project Guide]"
-
         has_named_members = any(
             isinstance(m, dict) and m.get("name", "").strip() for m in members
         )
@@ -1480,7 +1660,7 @@ def format_front_matter_section(
             f"# {proj_title}",
             "A PROJECT REPORT",
             "Submitted in partial fulfilment of the requirements for the award of the degree of",
-            f"**{degree}**",
+            f"**{degree_disp}**",
             "Submitted by",
             *student_lines,
             "Under the guidance of",
@@ -1509,7 +1689,7 @@ def format_front_matter_section(
                 "Submitted by **[Student Name]** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements."
             )
 
-        guide_val = guide if guide else "____________________"
+        guide_val = guide_disp if guide_raw else "____________________"
         coord_val = coord if coord else "____________________"
         hod_val = hod if hod else "____________________"
         dean_val = dean if dean else "____________________"
@@ -1522,29 +1702,24 @@ def format_front_matter_section(
             f"**Principal / Dean:** {dean_val}",
             "**Internal / External Examiner:** ____________________",
         ])
-        if dept or univ:
-            dept_cert = smart_title(dept) if dept else ""
-            univ_cert = univ if univ else ""
-            lines.append(f"*{', '.join(filter(None, [dept_cert, univ_cert]))}*")
+        loc_parts = [dept_disp, univ_disp]
+        lines.append(", ".join(loc_parts))
         return "\n\n".join(lines).strip()
 
     if "acknowledgement" in norm:
-        univ_ack = fm.get("university", "").strip()
-        dept_ack = smart_title(fm.get("department", "").strip())
         lines = [
             "## Acknowledgements\n\n"
             "We take immense pride and pleasure in presenting this project report. "
             "First and foremost, we express our profound gratitude to our project guide"
-            + (f", **{guide}**" if guide else "")
+            + (f", **{guide_disp}**" if guide_raw else "")
             + ", whose relentless encouragement, constructive criticism, and expert technical mentorship guided us through every stage of this work.\n\n"
             "We convey our sincere thanks to the Project Coordinator"
             + (f", **{coord}**" if coord else "")
-            + ", and to the Head of Department"
-            + (f", Department of {dept_ack}" if dept_ack else "")
+            + f", and to the Head of Department, Department of {dept_disp}"
             + ", for providing excellent laboratory infrastructure, technical facilities, and continuous administrative support.\n\n"
             "We are equally indebted to the Principal / Dean"
             + (f", **{dean}**" if dean else "")
-            + (f", {univ_ack}" if univ_ack else "")
+            + f", {univ_disp}"
             + ", for fostering an academic environment that champions innovation, quality engineering, and practical research.\n\n"
             "Finally, we extend our heartfelt appreciation to our fellow peers, faculty members, and our families, whose patience, understanding, and unwavering moral support made the successful completion of this project possible."
         ]
@@ -1582,37 +1757,10 @@ def format_front_matter_section(
         return "\n".join(lines).strip()
 
     if "list of figures" in norm:
-        return (
-            "## List of Figures\n\n"
-            "| Figure No. | Figure Caption |\n"
-            "| :--- | :--- |\n"
-            "| Fig. 4.1 | System Architecture Overview Diagram |\n"
-            "| Fig. 4.2 | High-Level Design (HLD) Modular Architecture |\n"
-            "| Fig. 4.3 | Low-Level Design (LLD) Component Flow |\n"
-            "| Fig. 4.4 | System Use Case & Execution Sequence Diagram |\n"
-            "| Fig. 4.5 | Entity-Relationship (ER) Schema Diagram |\n"
-            "| Fig. 6.1 | Work Breakdown Structure (WBS) Diagram |\n"
-            "| Fig. 6.2 | Project Timeline and Milestones Gantt Chart |\n"
-            "| Fig. 7.1 | Multi-Agent Execution Pipeline Flowchart |\n"
-            "| Fig. 7.2 | Database Schema & Data Dictionary Flow |"
-        )
+        return "## List of Figures\n\n*(No figures in this report)*"
 
     if "list of tables" in norm:
-        return (
-            "## List of Tables\n\n"
-            "| Table No. | Table Caption |\n"
-            "| :--- | :--- |\n"
-            "| Table 3.1 | Functional Requirements Specification Matrix |\n"
-            "| Table 3.2 | External Interface & API Requirements |\n"
-            "| Table 3.3 | Non-Functional Requirements (Performance & Security) |\n"
-            "| Table 5.1 | Comprehensive Technology Stack Matrix |\n"
-            "| Table 5.2 | Comparison of Frontend, Backend & Database Choices |\n"
-            "| Table 6.1 | Team Roles, Allocation & Effort Estimation |\n"
-            "| Table 6.2 | Project Risk Management & Mitigation Matrix |\n"
-            "| Table 7.1 | Database tables |\n"
-            "| Table 8.1 | Master Test Suite, Execution Plan & Test Cases |\n"
-            "| Table 9.1 | System Comparison with Existing Solutions |"
-        )
+        return "## List of Tables\n\nTable 7.1: Database tables"
 
     if "list of publications" in norm:
         return (
@@ -2280,6 +2428,14 @@ Return ONLY bullet points starting with '- '."""
                 record_section_progress(sec_title)
                 continue
 
+            # Deterministic Roadmap for Section 1.5 (Task 2 Item 3)
+            if re.search(r"^1\.5\b", sec_title):
+                sec_md = build_deterministic_roadmap_section(sec_title, heading_prefix)
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
+
             # Deterministic Data Design for Section 4.6 (Item 6)
             if re.search(r"^4\.6\b", sec_title) or (actual_ch_num == 4 and "data design" in norm_sec):
                 sec_md = build_deterministic_data_design_section(sec_title, heading_prefix)
@@ -2287,6 +2443,16 @@ Return ONLY bullet points starting with '- '."""
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
                 continue
+
+            # Section 6.6: Team Structure (Task 2 Item 10)
+            if re.search(r"^6\.6\b", sec_title) or (actual_ch_num == 6 and any(k in norm_sec for k in ["team structure", "team organization", "team roles"])):
+                members = (fm.get("teamMembers") or []) if isinstance(front_matter, dict) else []
+                if len(members) <= 1:
+                    sec_md = f"{heading_prefix} {sec_title}\n\nThe project was developed by a single student."
+                    rendered_subsections.append((s_idx, sec_md.strip()))
+                    persist_section_to_db(s_idx, sec_md.strip())
+                    record_section_progress(sec_title)
+                    continue
 
             # Deterministic Data Dictionary for Section 7.3 (Item 5 / 8)
             if re.search(r"^7\.3\b", sec_title) or (actual_ch_num == 7 and "data dictionary" in norm_sec):
@@ -2296,11 +2462,19 @@ Return ONLY bullet points starting with '- '."""
                 record_section_progress(sec_title)
                 continue
 
-            # Deterministic / Grounded deployment sections 10.5 to 10.8 (Item 6)
+            # Deterministic Installation for Section 10.3 (Task 2 Item 7)
+            if re.search(r"^10\.3\b", sec_title):
+                sec_md = build_deterministic_installation_section(sec_title, heading_prefix)
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
+
+            # Deterministic / Grounded deployment sections 10.5 to 10.8 (Task 2 Item 6)
             if re.search(r"^10\.5\b", sec_title):
                 sec_md = f"""{heading_prefix} {sec_title}
 
-Data backup in the local deployment environment is managed by creating filesystem copies of the SQLite database file. Operational maintenance utilizes manual process restarts when necessary, without automated clustering or distributed failover mechanisms."""
+System maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -2309,7 +2483,7 @@ Data backup in the local deployment environment is managed by creating filesyste
             if re.search(r"^10\.6\b", sec_title):
                 sec_md = f"""{heading_prefix} {sec_title}
 
-System monitoring relies on standard console log outputs provided by Uvicorn and FastAPI during runtime. Database integrity is preserved through SQLite ACID transaction guarantees, with manual inspection of service execution during development."""
+Database backup and recovery is conducted by creating direct filesystem copies of the SQLite database file (`reports.db`). In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring ACID transaction integrity."""
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -2318,7 +2492,7 @@ System monitoring relies on standard console log outputs provided by Uvicorn and
             if re.search(r"^10\.7\b", sec_title):
                 sec_md = f"""{heading_prefix} {sec_title}
 
-The platform is maintained under local Git version control without automated CI/CD deployment pipelines or containerization workflows. Verification is conducted by running the pytest suite manually prior to updates."""
+Deployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -2389,12 +2563,24 @@ The CiteBolt system is deployed locally on a single machine utilizing a FastAPI 
                     rules.append("- SECTION 1.5 REPORT ROADMAP: Outline the organizational roadmap of the report (what Chapters 2 through 11 cover). Do NOT repeat the project description or stack.")
 
             is_lit_survey = any(k in ch_title.lower() for k in ["literature", "survey", "related work"]) or any(k in norm_sec for k in ["literature", "survey", "related work", "gaps", "prior work"])
-            if is_lit_survey and len(chapter_sources) < 2:
-                sec_md = f"{heading_prefix} {sec_title}\n\n[Add your literature review and related work references here.]"
-                rendered_subsections.append((s_idx, sec_md.strip()))
-                persist_section_to_db(s_idx, sec_md.strip())
-                record_section_progress(sec_title)
-                continue
+            has_related_work_facts = bool((front_matter or {}).get("relatedWork", "").strip())
+            if is_lit_survey and not has_related_work_facts:
+                if re.search(r"^2\.1\b", sec_title):
+                    if len(chapter_sources) == 0:
+                        sec_md = f"{heading_prefix} {sec_title}\n\n[Add your literature review and related work references here.]"
+                        rendered_subsections.append((s_idx, sec_md.strip()))
+                        persist_section_to_db(s_idx, sec_md.strip())
+                        record_section_progress(sec_title)
+                        continue
+                    # When 1-2 real academic sources found, 2.1 proceeds to LLM generation below with [n] citations
+                else:
+                    if len(chapter_sources) < 2:
+                        clean_sec_title = re.sub(r"^\d+(?:\.\d+)*\s*", "", sec_title).strip()
+                        sec_md = f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
+                        rendered_subsections.append((s_idx, sec_md.strip()))
+                        persist_section_to_db(s_idx, sec_md.strip())
+                        record_section_progress(sec_title)
+                        continue
 
             if actual_ch_num in (1, 2):
                 if actual_ch_num == 2 and (front_matter or {}).get("relatedWork", "").strip():
@@ -2701,6 +2887,11 @@ Continue:"""
     raw_markdown = normalize_college_captions_and_placeholders(raw_markdown)
     raw_markdown = ensure_unique_figure_and_table_captions(raw_markdown, is_short=(length_preset == "short"))
     raw_markdown = normalize_college_captions_and_placeholders(raw_markdown)
+
+    # Build dynamic List of Figures and List of Tables from the final body text (Task 2 Item 1)
+    dynamic_lof, dynamic_lot = build_dynamic_lof_and_lot(raw_markdown)
+    raw_markdown = re.sub(r"## List of Figures.*?(?=\n## |\Z)", dynamic_lof + "\n\n", raw_markdown, flags=re.DOTALL)
+    raw_markdown = re.sub(r"## List of Tables.*?(?=\n## |\Z)", dynamic_lot + "\n\n", raw_markdown, flags=re.DOTALL)
 
     # Clean and renumber citations gaplessly
     renumbered_markdown, final_sources = filter_and_renumber_sources(raw_markdown, all_sources)
