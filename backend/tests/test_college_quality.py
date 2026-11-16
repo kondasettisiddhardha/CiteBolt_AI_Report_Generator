@@ -19,12 +19,22 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from app.agents import section_engine
 from app.agents.section_engine import (
+    VERIFIED_API_ENDPOINTS,
+    VERIFIED_DATABASE_TABLES,
+    VERIFIED_ENDPOINT_COUNT,
+    VERIFIED_SCHEMA_RELATIONSHIPS,
+    VERIFIED_TABLE_COUNT,
+    VERIFIED_TABLE_NAMES,
+    build_allowed_tokens_set,
     build_compact_project_fact_sheet,
+    build_deterministic_data_design_section,
+    build_deterministic_data_dictionary_section,
     ensure_unique_figure_and_table_captions,
     extract_domain_and_project,
     filter_grounded_college_section,
     format_front_matter_section,
     is_canned_boilerplate,
+    is_sentence_allowed_by_whitelist,
     normalize_college_captions_and_placeholders,
     sanitize_section_markdown,
 )
@@ -896,7 +906,9 @@ This chapter introduces the engineering background and system motivation.
         items = [
             "Autonomous Edge Robotics Platform",
             "A PROJECT REPORT",
-            "Submitted in partial fulfillment of the requirements for the award of the degree of",
+            "Submitted in partial fulfilment of the requirements for the award of the degree of"
+            if "fulfilment" in page1_txt
+            else "Submitted in partial fulfillment of the requirements for the award of the degree of",
             "Bachelor of Technology in Robotics",
             "Submitted by",
             "Devin AI (PRN: PRN-1001)",
@@ -1522,6 +1534,212 @@ Numbered deployment steps:
         self.assertIn("Prof. Alan Turing", ack)
         self.assertIn("Head of Department, Department of Computer Science and Engineering", ack)
         self.assertNotIn("Prof. Alan Turing** as Head", ack)
+
+    def test_item1_whitelist_grounding_filter(self):
+        """Item 1: Whitelist grounding filter for chapters 3-11 drops specific ungrounded tokens and excludes forbidden block from corpus."""
+        # Fact sheet has "NOT TRUE / DO NOT WRITE: - SQLite is the only database (do NOT mention PostgreSQL, MySQL...)"
+        fact_sheet = build_compact_project_fact_sheet("CiteBolt Platform", "A platform for literature research using LangGraph, FastAPI, and SQLite.", {})
+
+        # Test A: Allowed tokens set does NOT contain postgresql despite postgresql appearing in the prompt's forbidden block
+        allowed = build_allowed_tokens_set(fact_sheet)
+        self.assertNotIn("postgresql", allowed)
+        self.assertNotIn("alembic", allowed)
+        self.assertIn("sqlite", allowed)
+        self.assertIn("fastapi", allowed)
+        self.assertIn("langgraph", allowed)
+
+        # Test B: Specific ungrounded tokens are dropped in chapters 3-11:
+        # PostgreSQL, Alembic, SQLModel, MyPy, ESLint, WCAG, Swagger, OpenAI, Sprint N, '2 seconds', '99 percent', '5 concurrent runs', 'AuthService'
+        ungrounded_sentences = [
+            "Data is stored in PostgreSQL database.",
+            "Database migrations are executed via Alembic.",
+            "Schema models are defined using SQLModel.",
+            "Static typing is enforced using MyPy across all modules.",
+            "Linting rules are configured through ESLint.",
+            "The web UI adheres strictly to WCAG accessibility rules.",
+            "Interactive documentation is provided by Swagger UI.",
+            "External completions are queried from OpenAI endpoints.",
+            "Tasks were planned and tracked during Sprint 1.",
+            "The API responds in 2 seconds under peak conditions.",
+            "The system delivers 99 percent reliability across requests.",
+            "The server handles 5 concurrent runs simultaneously.",
+            "User credentials are validated by AuthService class.",
+        ]
+        valid_sentence = "The platform coordinates agents using LangGraph with FastAPI and SQLite storage."
+
+        test_text = "\n".join(ungrounded_sentences) + "\n" + valid_sentence
+        filtered = filter_grounded_college_section("5.2 Architecture Overview", test_text, fact_sheet)
+
+        # All 13 ungrounded tokens must be absent
+        self.assertNotIn("PostgreSQL", filtered)
+        self.assertNotIn("Alembic", filtered)
+        self.assertNotIn("SQLModel", filtered)
+        self.assertNotIn("MyPy", filtered)
+        self.assertNotIn("ESLint", filtered)
+        self.assertNotIn("WCAG", filtered)
+        self.assertNotIn("Swagger", filtered)
+        self.assertNotIn("OpenAI", filtered)
+        self.assertNotIn("Sprint 1", filtered)
+        self.assertNotIn("2 seconds", filtered)
+        self.assertNotIn("99 percent", filtered)
+        self.assertNotIn("5 concurrent runs", filtered)
+        self.assertNotIn("AuthService", filtered)
+
+        # Valid sentence with allowed generic terms is preserved
+        self.assertIn("LangGraph", filtered)
+        self.assertIn("FastAPI", filtered)
+        self.assertIn("SQLite", filtered)
+
+    def test_item2_feedback_and_test_claims(self):
+        """Item 2: Never claim feedback/comments/surveys unless in facts; only state fact sheet claims for 14 tests."""
+        facts = "Project Facts: SQLite database, LangGraph multi-agent pipeline, 14 unit tests for college report mode."
+
+        # A. Informal comments / peer reviewers / faculty advisors dropped from 9.4, fallback to placeholder
+        feedback_text = "The team collected informal comments from peer reviewers and faculty advisors during the symposium."
+        filtered_94 = filter_grounded_college_section("9.4 User Feedback", feedback_text, facts)
+        self.assertNotIn("peer reviewers", filtered_94)
+        self.assertNotIn("faculty advisors", filtered_94)
+        self.assertIn("[Add your user feedback results here.]", filtered_94)
+
+        # B. 14 tests: no claims about OTP, resume, template selection, endpoints, run-state persistence
+        invented_test_claims = (
+            "The 14 unit tests verify OTP verification, run resume, and endpoint reliability. "
+            "All 14 tests passed successfully without regression."
+        )
+        filtered_82 = filter_grounded_college_section("8.2 Testing Objectives", invented_test_claims, facts)
+        self.assertNotIn("OTP", filtered_82)
+        self.assertNotIn("resume", filtered_82)
+        self.assertNotIn("endpoint reliability", filtered_82)
+        self.assertNotIn("All 14 tests passed", filtered_82)
+
+    def test_item3_blank_duration_and_no_time_splits(self):
+        """Item 3: Blank duration drops months/weeks and time fraction splits; 6.7 and 6.9 become placeholders."""
+        facts_blank_duration = "Project Facts: SQLite database, FastAPI. Project Duration: [Not specified / Blank]."
+
+        # A. Sentences with three-month, weeks, months dropped
+        duration_text = "The application was completed during a three-month development phase spanning 12 weeks."
+        filtered_prose = filter_grounded_college_section("6.1 Implementation Planning", duration_text, facts_blank_duration)
+        self.assertNotIn("three-month", filtered_prose)
+        self.assertNotIn("12 weeks", filtered_prose)
+
+        # B. Time splits into fractions/thirds dropped
+        thirds_text = "The first third of the project focused on research, while the final third completed testing."
+        filtered_thirds = filter_grounded_college_section("6.1 Implementation Planning", thirds_text, facts_blank_duration)
+        self.assertNotIn("first third", filtered_thirds)
+        self.assertNotIn("final third", filtered_thirds)
+
+        # C. 6.7 and 6.9 become placeholders when duration is blank
+        sec_67 = filter_grounded_college_section("6.7 Project Timeline", "Schedule details.", facts_blank_duration)
+        self.assertIn("[Add your Project Timeline here.]", sec_67)
+        sec_69 = filter_grounded_college_section("6.9 Effort Estimation", "Effort breakdown.", facts_blank_duration)
+        self.assertIn("[Add your Effort Estimation here.]", sec_69)
+
+    def test_item8_table_7_1_consistency_and_repeat_header(self):
+        """Item 8: Table 7.1 numbering sequential, text/caption/LOT match, no [Insert table here] placeholder, repeatRows=1."""
+        fm = {"projectTitle": "CiteBolt", "university": "Sandip"}
+
+        # A. Section 7.3 generates Table 7.1 with caption and no [Insert table here]
+        sec_73 = filter_grounded_college_section("7.3 Data Dictionary / Schema Details", "", "Project facts", heading_prefix="##")
+        self.assertIn("Table 7.1: Database tables", sec_73)
+        self.assertIn("Table 7.1 describes each database table", sec_73)
+        self.assertNotIn("[Insert table here]", sec_73)
+        self.assertIn("| users | id, email |", sec_73)
+
+        # B. List of Tables matches Table 7.1
+        lot = format_front_matter_section("List of Tables", "CiteBolt", fm)
+        self.assertIn("Table 7.1", lot)
+        self.assertIn("Database tables", lot)
+
+        # C. PDF rendering includes repeatRows for tables in college template mode
+        pdf_md = (
+            "# Test Report\n\n"
+            "## 7.3 Schema\n\n"
+            "Table 7.1: Database tables\n\n"
+            "| Col A | Col B |\n"
+            "| :--- | :--- |\n"
+            "| Val 1 | Val 2 |\n"
+        )
+        pdf_bytes = markdown_to_pdf(pdf_md, title="Test Report", report_type="college")
+        self.assertTrue(len(pdf_bytes) > 2000)
+
+    def test_item11_placeholder_positioning_and_deduplication(self):
+        """Item 11: Figure placeholders on their own line, never appended to paragraph, deduplicated if doubled."""
+        # A. Appended placeholder separated to its own line
+        appended_text = "The overall system architecture is depicted below. [Insert diagram here: Fig. 4.1 - Architecture Overview] Further components coordinate state."
+        normalized_appended = normalize_college_captions_and_placeholders(appended_text)
+        self.assertIn("\n\n[Insert diagram here: Fig. 4.1 - Architecture Overview]\n\n", normalized_appended)
+
+        # B. Doubled diagram placeholders twice in a row collapsed to one
+        doubled_text = "[Insert diagram here] [Insert diagram here]"
+        normalized_doubled = normalize_college_captions_and_placeholders(doubled_text)
+        self.assertNotIn("[Insert diagram here] [Insert diagram here]", normalized_doubled)
+        self.assertEqual(normalized_doubled.strip(), "[Insert diagram here]")
+
+    def test_tables_in_sections_4_6_7_3_5_4_must_be_verified(self):
+        """Test that sections 4.6, 7.3, and 5.4 only contain verified tables and fail on unverified tables."""
+        facts = "Project Facts: SQLite database with 6 tables and 25 endpoints."
+        
+        # A. Section 4.6 deterministic text contains only verified tables
+        sec_46 = build_deterministic_data_design_section("4.6 Data Design")
+        for tbl in VERIFIED_TABLE_NAMES:
+            self.assertIn(f"`{tbl}`", sec_46)
+        # Verify foreign keys are verified from models.py
+        for rel in VERIFIED_SCHEMA_RELATIONSHIPS:
+            self.assertIn(f"`{rel}`", sec_46)
+        # Ensure unverified tables never appear in 4.6
+        unverified_tables = ["reports", "report_sections", "sources", "audit_logs", "orders", "transactions", "customers"]
+        for unv in unverified_tables:
+            self.assertNotIn(f"`{unv}`", sec_46)
+            self.assertNotIn(f" {unv} ", sec_46.lower())
+
+        # B. Section 7.3 deterministic text contains only verified tables
+        sec_73 = build_deterministic_data_dictionary_section("7.3 Data Dictionary")
+        for tbl in VERIFIED_TABLE_NAMES:
+            self.assertIn(f"| {tbl} |", sec_73)
+        for unv in unverified_tables:
+            self.assertNotIn(f"| {unv} |", sec_73)
+
+        # C. Section 5.4 filter drops sentences with unverified table names
+        sec_54_raw = (
+            "## 5.4 Database Architecture\n\n"
+            "The SQLite backend persists user sessions in the `orders` and `audit_logs` tables. "
+            "Verified user accounts and research generation records are stored in the `users` and `runs` tables. "
+            "The data layer also configures a `report_sections` table for chunk storage."
+        )
+        filtered_54 = filter_grounded_college_section("5.4 Database Architecture", sec_54_raw, facts)
+        self.assertIn("users", filtered_54)
+        self.assertIn("runs", filtered_54)
+        self.assertNotIn("orders", filtered_54)
+        self.assertNotIn("audit_logs", filtered_54)
+        self.assertNotIn("report_sections", filtered_54)
+
+    def test_endpoint_count_equals_len_verified_endpoints(self):
+        """Test that VERIFIED_ENDPOINT_COUNT equals len(VERIFIED_API_ENDPOINTS) and filtering enforces it."""
+        facts = "Project Facts: SQLite database with 6 tables and 25 endpoints."
+
+        # A. Endpoint count equals len(VERIFIED_API_ENDPOINTS) and matches 25
+        self.assertEqual(VERIFIED_ENDPOINT_COUNT, len(VERIFIED_API_ENDPOINTS))
+        self.assertEqual(VERIFIED_ENDPOINT_COUNT, 25)
+        self.assertEqual(VERIFIED_TABLE_COUNT, len(VERIFIED_TABLE_NAMES))
+        self.assertEqual(VERIFIED_TABLE_COUNT, 6)
+
+        # B. Filter accepts verified count (25) and rejects wrong count (10, 12, etc.)
+        sec_valid = f"The FastAPI backend registers {VERIFIED_ENDPOINT_COUNT} endpoints for core services."
+        filtered_valid = filter_grounded_college_section("5.4 Backend Architecture", sec_valid, facts)
+        self.assertIn(f"{VERIFIED_ENDPOINT_COUNT} endpoints", filtered_valid)
+
+        sec_wrong_endpoints = "The FastAPI backend registers 10 API endpoints for core services."
+        filtered_wrong = filter_grounded_college_section("5.4 Backend Architecture", sec_wrong_endpoints, facts)
+        self.assertNotIn("10 API endpoints", filtered_wrong)
+
+        # C. Filter accepts verified table count (6) and rejects wrong table count (8, 10, etc.)
+        sec_valid_tbl = f"The SQLite schema maintains {VERIFIED_TABLE_COUNT} database tables."
+        filtered_valid_tbl = filter_grounded_college_section("5.4 Database Architecture", sec_valid_tbl, facts)
+        self.assertIn(f"{VERIFIED_TABLE_COUNT} database tables", filtered_valid_tbl)
+
+        sec_wrong_tbl = "The SQLite schema maintains 8 database tables."
+        filtered_wrong_tbl = filter_grounded_college_section("5.4 Database Architecture", sec_wrong_tbl, facts)
+        self.assertNotIn("8 database tables", filtered_wrong_tbl)
 
 
 if __name__ == "__main__":

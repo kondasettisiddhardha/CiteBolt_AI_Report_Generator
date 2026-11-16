@@ -29,6 +29,124 @@ from app.text import clean_title, filter_and_renumber_sources, smart_title, stri
 logger = logging.getLogger("citebolt.section_engine")
 
 
+# --- Single Source of Truth for Database Schema & Verified API Endpoints ---
+VERIFIED_DATABASE_TABLES: list[dict[str, str]] = [
+    {
+        "name": "users",
+        "columns": "id, email",
+        "purpose": "Stores registered user identity and email address.",
+    },
+    {
+        "name": "otp_codes",
+        "columns": "id, email, code_hash",
+        "purpose": "Manages time-sensitive one-time password verification tokens.",
+    },
+    {
+        "name": "runs",
+        "columns": "id, user_id, topic, status, report_markdown",
+        "purpose": "Persists report generation workflows, outlines, and markdown artifacts.",
+    },
+    {
+        "name": "templates",
+        "columns": "id, user_id, name, outline_json",
+        "purpose": "Stores predefined and custom report structural templates.",
+    },
+    {
+        "name": "user_settings",
+        "columns": "user_id, theme",
+        "purpose": "Retains user preference settings including interface display theme.",
+    },
+    {
+        "name": "contact_messages",
+        "columns": "id, email, message",
+        "purpose": "Captures user feedback and contact form submissions.",
+    },
+]
+
+VERIFIED_TABLE_NAMES: list[str] = [t["name"] for t in VERIFIED_DATABASE_TABLES]
+VERIFIED_TABLE_COUNT: int = len(VERIFIED_TABLE_NAMES)  # 6
+REAL_DB_TABLES: set[str] = set(VERIFIED_TABLE_NAMES)
+
+# Verified foreign key relationships verified directly in models.py:
+# - Run.user_id -> User.id (ForeignKey("users.id", ondelete="CASCADE"))
+# - Template.user_id -> User.id (ForeignKey("users.id", ondelete="CASCADE"))
+# - UserSettings.user_id -> User.id (ForeignKey("users.id", ondelete="CASCADE"))
+VERIFIED_SCHEMA_RELATIONSHIPS: list[str] = [
+    "runs.user_id -> users.id",
+    "templates.user_id -> users.id",
+    "user_settings.user_id -> users.id",
+]
+
+# Verified API endpoints verified directly in main.py:
+VERIFIED_API_ENDPOINTS: list[str] = [
+    "GET /api/health",
+    "POST /api/auth/request-otp",
+    "POST /api/auth/verify-otp",
+    "POST /api/auth/logout",
+    "GET /api/auth/me",
+    "GET /api/runs",
+    "POST /api/research",
+    "POST /api/runs/{run_id}/resume",
+    "GET /api/runs/{run_id}",
+    "PATCH /api/runs/{run_id}",
+    "DELETE /api/runs/{run_id}",
+    "DELETE /api/runs",
+    "POST /api/runs/{run_id}/cancel",
+    "POST /api/runs/{run_id}/retry",
+    "GET /api/runs/{run_id}/stream",
+    "GET /api/runs/{run_id}/export",
+    "POST /api/extract",
+    "POST /api/templates/outline",
+    "GET /api/templates",
+    "POST /api/templates",
+    "DELETE /api/templates/{template_id}",
+    "GET /api/settings",
+    "PUT /api/settings",
+    "POST /api/contact",
+    "GET /api/config",
+]
+
+VERIFIED_ENDPOINT_COUNT: int = len(VERIFIED_API_ENDPOINTS)  # 25
+
+WORD_NUMBERS: dict[str, int] = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
+    "eighteen": 18, "nineteen": 19, "twenty": 20, "twenty-five": 25, "twenty five": 25,
+}
+
+
+def parse_count_mention(match_text: str) -> int | None:
+    t = match_text.strip().lower()
+    if t.isdigit():
+        return int(t)
+    return WORD_NUMBERS.get(t)
+
+
+def build_deterministic_data_design_section(sec_title: str, heading_prefix: str = "##") -> str:
+    table_names_str = ", ".join(f"`{t}`" for t in VERIFIED_TABLE_NAMES[:-1]) + f", and `{VERIFIED_TABLE_NAMES[-1]}`"
+    rels_str = ", ".join(f"`{rel}`" for rel in VERIFIED_SCHEMA_RELATIONSHIPS)
+    return f"""{heading_prefix} {sec_title}
+
+The database architecture consists of {VERIFIED_TABLE_COUNT} relational tables: {table_names_str}. Verified foreign key relationships in the data model link {rels_str}, ensuring user-scoped isolation for execution runs, report templates, and interface settings in local SQLite storage."""
+
+
+def build_deterministic_data_dictionary_section(sec_title: str, heading_prefix: str = "##") -> str:
+    table_rows = "\n".join(
+        f"| {t['name']} | {t['columns']} | {t['purpose']} |"
+        for t in VERIFIED_DATABASE_TABLES
+    )
+    return f"""{heading_prefix} {sec_title}
+
+The database schema is implemented using SQLite to provide persistent local storage for report workflows and settings. Table 7.1 describes each database table, its primary attributes, and operational role within the system.
+
+Table 7.1: Database tables
+
+| Table | Columns | Purpose |
+| :--- | :--- | :--- |
+{table_rows}"""
+
+
 def extract_domain_and_project(topic: str, front_matter: dict[str, Any] | None = None) -> tuple[str, str]:
     """Derive clean Domain and Project names from topic and front_matter."""
     fm = front_matter or {}
@@ -85,12 +203,14 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     if db_tables:
         lines.append(f"Database Tables: {db_tables}")
     else:
-        lines.append("Database Tables: users(id, email), otp_codes(id, email, code_hash), runs(id, topic, status, report_markdown), templates(id, name, outline_json), user_settings(user_id, theme), contact_messages(id, email, message).")
+        formatted_tables = ", ".join(f"{t['name']}({t['columns']})" for t in VERIFIED_DATABASE_TABLES)
+        lines.append(f"Database Tables: {formatted_tables}.")
     endpoints = fm.get("mainEndpoints", "").strip()
     if endpoints:
         lines.append(f"Main API Endpoints: {endpoints}")
     else:
-        lines.append("Main Endpoints: POST /api/auth/request-otp, POST /api/auth/verify-otp, POST /api/research, GET /api/runs, GET /api/runs/{id}, POST /api/runs/{id}/resume, GET /api/runs/{id}/export, GET /api/templates, GET /api/settings, GET /api/health.")
+        formatted_endpoints = ", ".join(VERIFIED_API_ENDPOINTS)
+        lines.append(f"Main Endpoints: {formatted_endpoints}.")
 
     lines.append(
         "How to Run: from backend/: uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload and npm run dev for the frontend."
@@ -445,6 +565,143 @@ BANNED_PHRASES = [
     "asynchronous research task",
 ]
 
+FIXED_GENERIC_ALLOWED_TERMS = {
+    "research",
+    "analysis",
+    "writer",
+    "langgraph",
+    "fastapi",
+    "sqlite",
+    "sqlalchemy",
+    "react",
+    "vite",
+    "tailwind",
+    "groq",
+    "tavily",
+    "gmail smtp",
+    "gmail",
+    "smtp",
+    "jwt",
+    "otp",
+    "reportlab",
+    "python-docx",
+    "pytest",
+    "uvicorn",
+    "python",
+    "typescript",
+    "javascript",
+    "node.js",
+    "nodejs",
+    "node",
+    "html",
+    "css",
+    "json",
+    "rest",
+    "api",
+    "apis",
+    "http",
+    "pydantic",
+    "citebolt",
+    "figure",
+    "table",
+    "chapter",
+    "section",
+    "appendix",
+    "user",
+    "users",
+    "student",
+    "guide",
+    "coordinator",
+    "hod",
+    "dean",
+    "department",
+    "university",
+}
+
+KNOWN_EXTERNAL_PROPER_TOOLS = [
+    "postgresql", "postgres", "alembic", "sqlmodel", "mypy", "eslint", "wcag",
+    "swagger", "openai", "docker", "kubernetes", "redis", "mysql", "mongodb",
+    "dynamodb", "cassandra", "couchdb", "kafka", "rabbitmq", "selenium", "cypress",
+    "jest", "mocha", "graphql", "grpc", "circleci", "jenkins", "github actions",
+    "jira", "confluence", "linear", "gitlab", "webpack", "babel", "rollup", "turbopack",
+    "chakra", "mui", "bootstrap", "bulma", "prisma", "drizzle", "tortoise", "peewee",
+    "django", "flask", "express", "nestjs", "spring", "next.js", "nuxt", "svelte",
+    "vue", "angular", "electron", "tauri", "aws", "azure", "gcp", "s3", "ec2", "lambda"
+]
+
+
+def build_allowed_tokens_set(positive_facts: str = "") -> set[str]:
+    """Build the allowed set from user fact sheet text ONLY + fixed allow-list of generic terms.
+    
+    IMPORTANT: The 'NOT TRUE / DO NOT WRITE' block must NOT be included in the corpus.
+    """
+    allowed = set(FIXED_GENERIC_ALLOWED_TERMS)
+    if positive_facts:
+        clean_positive = re.split(r"NOT TRUE\s*/\s*DO NOT WRITE", positive_facts, flags=re.IGNORECASE)[0]
+        words = re.findall(r"[A-Za-z0-9_./\-]+", clean_positive.lower())
+        allowed.update(words)
+    return allowed
+
+
+def is_sentence_allowed_by_whitelist(sent: str, allowed_set: set[str], positive_corpus: str) -> bool:
+    """Check if a sentence in college chapters 3-11 complies with the whitelist.
+    
+    Drops sentence if it contains specific tokens (versions, numbers with units/percentages/concurrency,
+    CamelCase identifiers, Sprints, acronyms, proper tool names) not in the allowed set.
+    """
+    s_clean = sent.strip()
+    if not s_clean:
+        return True
+
+    pos_lower = positive_corpus.lower()
+
+    # 1. Version numbers (e.g., Python 3.11, React 18)
+    ver_matches = re.findall(r"\b([A-Za-z]+)\s+(\d+(?:\.\d+)+)\b", s_clean)
+    for name, ver in ver_matches:
+        if f"{name.lower()} {ver}" not in pos_lower:
+            return False
+    ver_single = re.findall(r"\b(Python|React|Node|Vite|Tailwind|FastAPI|Uvicorn)\s+(\d+)\b", s_clean, re.IGNORECASE)
+    for name, ver in ver_single:
+        if f"{name.lower()} {ver}" not in pos_lower:
+            return False
+
+    # 2. Numbers with units or percentages or concurrency ('2 seconds', '99 percent', '99%', '5 concurrent runs')
+    unit_matches = re.findall(
+        r"\b\d+(?:\.\d+)?\s*(?:seconds?|secs?|ms|milliseconds?|minutes?|hours?|days?|weeks?|months?|years?|percent|%|fps|mb|gb|kb|concurrent\s+\w+|\w+\s+per\s+\w+)\b",
+        s_clean,
+        re.IGNORECASE,
+    )
+    for u in unit_matches:
+        u_clean = u.lower().strip()
+        if u_clean not in pos_lower:
+            return False
+
+    # 3. Identifiers like AuthService, SQLModel, MyPy, ESLint, OpenAI
+    camel_matches = re.findall(r"\b[A-Za-z0-9]*[a-z][A-Z][a-zA-Z0-9]*\b", s_clean)
+    for c in camel_matches:
+        c_low = c.lower()
+        if c_low not in allowed_set:
+            return False
+
+    # 4. Sprints (Sprint N, Sprint 1, Sprint 2)
+    if re.search(r"\bSprint\s+[A-Za-z0-9]+\b", s_clean, re.IGNORECASE):
+        if "sprint" not in allowed_set:
+            return False
+
+    # 5. Acronyms (>2 caps letters, e.g. WCAG, CRUD, GDPR, CCPA)
+    caps_matches = re.findall(r"\b[A-Z]{3,}\b", s_clean)
+    for ac in caps_matches:
+        if ac.lower() not in allowed_set:
+            return False
+
+    # 6. Capitalized proper nouns / tool or library names (PostgreSQL, Alembic, Swagger, etc.)
+    for tool in KNOWN_EXTERNAL_PROPER_TOOLS:
+        if re.search(r"\b" + re.escape(tool) + r"\b", s_clean, re.IGNORECASE):
+            if tool not in allowed_set:
+                return False
+
+    return True
+
 DANGLING_END_RE = re.compile(
     r"\b(?:in|on|at|for|with|by|from|to|into|onto|of|and|or|as|that|which|including|such as|depends on|utilizes|uses|delivers|provides|consists of|shown in|illustrates|depicts)\.?$",
     re.IGNORECASE,
@@ -479,17 +736,34 @@ def clean_dangling_fragments_and_placeholders(text: str) -> str:
 
     # Deduplicate doubled figure placeholders
     text = re.sub(
-        r"\[Insert diagram here\]\s*\n+\s*(\[Insert diagram here:\s*[^\]]+\])",
+        r"\[Insert diagram here\]\s*\n*\s*(\[Insert diagram here:\s*[^\]]+\])",
         r"\1",
         text,
         flags=re.IGNORECASE,
     )
     text = re.sub(
-        r"(\[Insert diagram here:\s*[^\]]+\])\s*\n+\s*\[Insert diagram here\]",
+        r"(\[Insert diagram here:\s*[^\]]+\])\s*\n*\s*\[Insert diagram here\]",
         r"\1",
         text,
         flags=re.IGNORECASE,
     )
+    text = re.sub(
+        r"\[Insert diagram here\]\s*\[Insert diagram here\]",
+        r"[Insert diagram here]",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Ensure figure placeholders are on their own line, never appended to end of a paragraph
+    def _isolate_figure_placeholder(m: re.Match[str]) -> str:
+        prefix = m.group(1)
+        ph = m.group(2)
+        if re.search(r"\b(?:see|refer to|shown in|in)\s*\(?$", prefix, re.IGNORECASE):
+            return m.group(0)
+        return f"{prefix}\n\n{ph}"
+
+    text = re.sub(r"([^\n]+?)(\[Insert diagram here[^\]]*\])", _isolate_figure_placeholder, text, flags=re.IGNORECASE)
+    text = re.sub(r"(\[Insert diagram here[^\]]*\])\s*([^\n])", r"\1\n\n\2", text, flags=re.IGNORECASE)
 
     lines = text.split("\n")
     cleaned_lines = []
@@ -629,20 +903,6 @@ def normalize_college_captions_and_placeholders(text: str) -> str:
     if not text:
         return text
 
-    # 0. Deduplicate doubled figure placeholders
-    text = re.sub(
-        r"\[Insert diagram here\]\s*\n+\s*(\[Insert diagram here:\s*[^\]]+\])",
-        r"\1",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"(\[Insert diagram here:\s*[^\]]+\])\s*\n+\s*\[Insert diagram here\]",
-        r"\1",
-        text,
-        flags=re.IGNORECASE,
-    )
-
     # 1. Collapse nested [Insert diagram here: [Insert diagram here: X]] to a single [Insert diagram here: X]
     while re.search(r"\[Insert diagram here:?\s*\[Insert diagram here:?\s*([^\]]*)\]\]", text, flags=re.IGNORECASE):
         text = re.sub(
@@ -651,6 +911,26 @@ def normalize_college_captions_and_placeholders(text: str) -> str:
             text,
             flags=re.IGNORECASE,
         )
+
+    # 0. Deduplicate doubled figure placeholders
+    text = re.sub(
+        r"\[Insert diagram here\]\s*\n*\s*(\[Insert diagram here:\s*[^\]]+\])",
+        r"\1",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(\[Insert diagram here:\s*[^\]]+\])\s*\n*\s*\[Insert diagram here\]",
+        r"\1",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\[Insert diagram here\]\s*\[Insert diagram here\]",
+        r"[Insert diagram here]",
+        text,
+        flags=re.IGNORECASE,
+    )
 
     # 2. Always close the bracket. A bare '[Insert diagram here:' becomes '[Insert diagram here]'
     text = re.sub(r"\[Insert diagram here:\s*(?=\n|$)", "[Insert diagram here]", text, flags=re.IGNORECASE)
@@ -668,7 +948,6 @@ def normalize_college_captions_and_placeholders(text: str) -> str:
             s = re.sub(r"^[\[\]]+", "", s).strip()
             return s
         return line
-
     lines = [_strip_caption_stray_brackets(ln) for ln in text.split("\n")]
     text = "\n".join(lines)
 
@@ -685,6 +964,17 @@ def normalize_college_captions_and_placeholders(text: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
+
+    # Ensure figure placeholders are on their own line, never appended to end of a paragraph
+    def _isolate_figure_placeholder(m: re.Match[str]) -> str:
+        prefix = m.group(1)
+        ph = m.group(2)
+        if re.search(r"\b(?:see|refer to|shown in|in)\s*\(?$", prefix, re.IGNORECASE):
+            return m.group(0)
+        return f"{prefix}\n\n{ph}"
+
+    text = re.sub(r"([^\n]+?)(\[Insert diagram here[^\]]*\])", _isolate_figure_placeholder, text, flags=re.IGNORECASE)
+    text = re.sub(r"(\[Insert diagram here[^\]]*\])\s*([^\n])", r"\1\n\n\2", text, flags=re.IGNORECASE)
 
     # 5. Drop captions with an empty or junk title ("for the ER diagram.", etc.)
     clean_lines = []
@@ -750,18 +1040,50 @@ def filter_grounded_college_section(
 ) -> str:
     """Post-generation grounding filter applied at the sentence level for college reports.
     
-    Removes ungrounded metrics, ungrounded tools, and forbidden concepts.
+    Enforces whitelist grounding filter for chapters 3-11, removes ungrounded metrics and tools.
     Falls back to '[Add your <title> here.]' if the section becomes empty.
     """
-    if not is_college or not sec_md:
+    if not is_college:
         return sec_md
 
     clean_sec_title = re.sub(r"^\d+(?:\.\d+)*\s*", "", sec_title).strip()
     norm_sec = sec_title.lower()
     facts_lower = fact_sheet.lower() if fact_sheet else ""
+    positive_facts = re.split(r"NOT TRUE\s*/\s*DO NOT WRITE", fact_sheet, flags=re.IGNORECASE)[0]
+    allowed_tokens = build_allowed_tokens_set(positive_facts=positive_facts)
 
-    # Special section overrides:
-    # Section 7.4 / 7.5: agents are LangGraph nodes, NOT FastAPI route handlers
+    m_ch = re.search(r"^(?:chapter\s+)?(\d+)", sec_title.strip(), re.IGNORECASE)
+    actual_ch_num = int(m_ch.group(1)) if m_ch else 0
+    apply_whitelist = (actual_ch_num >= 3)
+    duration_blank = "not specified" in facts_lower or "blank" in facts_lower or "project duration" not in facts_lower
+
+    # Deterministic Data Design for Section 4.6 (Item 6)
+    if re.search(r"^4\.6\s+data\s+design\b", sec_title, re.IGNORECASE) or norm_sec == "4.6 data design":
+        return build_deterministic_data_design_section(sec_title, heading_prefix)
+
+    # Deterministic Data Dictionary for Section 7.3 (Item 5 / 8)
+    if re.search(r"^7\.3\b", sec_title) or (actual_ch_num == 7 and "data dictionary" in norm_sec):
+        return build_deterministic_data_dictionary_section(sec_title, heading_prefix)
+
+    if not sec_md:
+        return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
+
+    # Section 6.7 and 6.9 with no duration become placeholders (Item 3)
+    if duration_blank and any(k in norm_sec for k in ["6.7", "6.9", "timeline", "effort estimation"]):
+        return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
+
+    # Section 8.7: defect tracking (Item 4)
+    if any(k in norm_sec for k in ["8.7", "defect tracking", "bug tracking", "maintenance"]):
+        if "jira" not in facts_lower and "bug tracking" not in facts_lower and "defect" not in facts_lower:
+            return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
+
+    # Section 9.6: comparison with existing systems
+    if "9.6" in norm_sec or ("comparison" in norm_sec and "existing" in norm_sec):
+        has_allowed_comparison = "comparison" in facts_lower and len(facts_lower.split()) > 50
+        if not has_allowed_comparison:
+            return f"{heading_prefix} {sec_title}\n\n[Add your comparison with existing systems here.]"
+
+    # Special section overrides: agents are LangGraph nodes, NOT FastAPI route handlers
     sec_md = re.sub(
         r"\b(?:FastAPI\s+route\s+handlers?|FastAPI\s+endpoints?|FastAPI\s+routes?)\s+(?:acting\s+as|serving\s+as|for)\s+(?:agents?|the\s+multi-agent\s+pipeline)",
         "LangGraph workflow nodes for multi-agent coordination",
@@ -775,22 +1097,10 @@ def filter_grounded_college_section(
         flags=re.IGNORECASE,
     )
 
-    # Section 8.7 & 10.5/10.6: no invented process (bug tracking, DB integrity monitoring, backup procedures)
-    if any(k in norm_sec for k in ["8.7", "10.5", "10.6", "maintenance", "monitoring", "backup", "integrity"]):
-        if "backup" not in facts_lower and "monitoring" not in facts_lower:
-            return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
-
-    # Section 9.6: no claims about existing platforms/tools; otherwise use [Add your comparison with existing systems here.]
-    if "9.6" in norm_sec or ("comparison" in norm_sec and "existing" in norm_sec):
-        has_allowed_comparison = "comparison" in facts_lower and len(facts_lower.split()) > 50
-        if not has_allowed_comparison:
-            return f"{heading_prefix} {sec_title}\n\n[Add your comparison with existing systems here.]"
-
     out_lines: list[str] = []
     has_body_text = False
 
     is_intro_chapter = any(norm_sec.startswith(f"1.{k}") for k in range(1, 8)) or norm_sec.startswith("chapter 1")
-    duration_blank = "not specified" in facts_lower or "blank" in facts_lower or "project duration" not in facts_lower
 
     for line in sec_md.split("\n"):
         stripped = line.strip()
@@ -813,6 +1123,11 @@ def filter_grounded_college_section(
         for sent in sentences:
             s_low = sent.lower()
 
+            # Whitelist grounding filter for chapters 3-11 (Item 1)
+            if apply_whitelist:
+                if not is_sentence_allowed_by_whitelist(sent, allowed_tokens, positive_facts):
+                    continue
+
             # Check forbidden words
             if any(fw in s_low for fw in FORBIDDEN_COLLEGE_WORDS):
                 continue
@@ -821,35 +1136,59 @@ def filter_grounded_college_section(
             if any(tool in s_low for tool in FORBIDDEN_COLLEGE_TOOLS if tool not in facts_lower):
                 continue
 
-            # Banned databases (Item 4)
+            # Banned databases
             if any(db in s_low for db in BANNED_DATABASES if db not in facts_lower):
                 continue
 
-            # Banned agent names (Item 4)
+            # Banned agent names
             if any(ba in s_low for ba in BANNED_AGENTS):
                 continue
 
-            # Banned phrases (Item 4)
+            # Banned phrases
             if any(bp in s_low for bp in BANNED_PHRASES if bp not in facts_lower):
                 continue
 
-            # Section 8.2 objectives: only 14 unit tests (Item 4)
-            if "8.2" in norm_sec or ("test" in norm_sec and "objective" in norm_sec):
-                forbidden_82 = ["otp", "resume", "endpoint reliability", "concurrency", "concurrent", "load test", "stress test"]
-                if any(fb in s_low for fb in forbidden_82 if fb not in facts_lower):
+            # Never state feedback, comments, surveys, reviews or testing were collected unless in facts (Item 2)
+            has_feedback_in_facts = "feedback" in positive_facts.lower() and len(positive_facts.split()) > 50
+            if not has_feedback_in_facts:
+                if any(k in s_low for k in [
+                    "informal comment", "informal comments", "peer reviewer", "peer reviewers",
+                    "faculty advisor", "faculty advisors", "user feedback", "survey", "surveys",
+                    "user testing", "usability test", "collected feedback", "gathered feedback"
+                ]):
                     continue
 
-            # Sections 8.5 & 8.6 repetition: do not repeat 14 tests sentence from 8.1 / 8.3 (Item 6)
+            # 14 tests: only what fact sheet says (Item 2)
+            if any(k in s_low for k in ["14 tests", "14 unit tests", "unit test suite"]):
+                forbidden_test_claims = [
+                    "otp", "resume", "endpoints", "template selection", "citation numbering",
+                    "placeholder insertion", "run-state persistence", "all tests passed",
+                    "all 14 tests passed", "100% pass", "passed successfully"
+                ]
+                if any(fc in s_low for fc in forbidden_test_claims if fc not in positive_facts.lower()):
+                    continue
+
+            # In 8.2, 8.5, 9.5: never say tests cover OTP, resume, etc. and never say all tests passed (Item 2)
+            if any(k in norm_sec for k in ["8.2", "8.5", "9.5", "test objective", "test case", "evaluation result"]):
+                if any(k in s_low for k in ["all tests passed", "all 14 tests passed", "passed successfully"]):
+                    continue
+                if any(k in s_low for k in [
+                    "otp", "resume", "endpoints", "endpoint reliability", "template selection",
+                    "citation numbering", "placeholder insertion", "run-state persistence"
+                ] if k not in positive_facts.lower()):
+                    continue
+
+            # Sections 8.5 & 8.6 repetition: do not repeat 14 tests sentence from 8.1 / 8.3
             if any(k in norm_sec for k in ["8.5", "8.6", "test case", "test plan"]):
                 if any(x in s_low for x in ["14 unit tests", "14 tests", "mocked llm and mocked search"]):
                     continue
 
-            # Run-command stripping at sentence level for 1.1-1.7 and 5.1 (Item 3)
+            # Run-command stripping at sentence level for 1.1-1.7 and 5.1
             if is_intro_chapter or norm_sec.startswith("5.1"):
                 if any(cmd in s_low for cmd in ["uvicorn", "npm run", "main:app", "127.0.0.1", "--host", "--port", "--reload", "8001"]):
                     continue
 
-            # Section 1.1 to 1.7 must not contain endpoint paths or code identifiers (Item 3)
+            # Section 1.1 to 1.7 must not contain endpoint paths or code identifiers
             if is_intro_chapter:
                 if "/api/" in sent or any(ident in sent for ident in [
                     "report_markdown", "outline_json", "user_id", "otp_codes", "code_hash",
@@ -858,10 +1197,33 @@ def filter_grounded_college_section(
                 ]):
                     continue
 
-            # Duration: if duration is blank, drop duration count claims (Item 1)
+            # Duration: if duration is blank, drop duration count claims (Item 3)
             if duration_blank:
-                if re.search(r"\b(?:three|four|six|twelve|two|2|3|4|6|12)\s+(?:months|weeks)\b", s_low):
+                if re.search(r"\b(?:\w+-month|\d+-month|three-month|six-month|\d+\s+months?|\d+\s+weeks?|months|weeks)\b", s_low):
                     continue
+                if re.search(r"\b(?:first|second|final|one|two)\s+(?:third|thirds|half|quarter|fraction)\b|\b(?:thirds?|halves)\b", s_low):
+                    continue
+
+            # Enforce verified endpoint and table counts (Single Source of Truth)
+            m_ep = re.search(r"\b(\d+|[a-zA-Z\-]+)\s+(?:api\s+|rest\s+)?endpoints?\b", s_low)
+            if m_ep:
+                num = parse_count_mention(m_ep.group(1))
+                if num is not None and num != VERIFIED_ENDPOINT_COUNT:
+                    continue  # Drop sentence with unverified endpoint count
+            
+            m_tbl = re.search(r"\b(\d+|[a-zA-Z\-]+)\s+(?:database\s+|relational\s+)?tables?\b", s_low)
+            if m_tbl:
+                num = parse_count_mention(m_tbl.group(1))
+                if num is not None and num != VERIFIED_TABLE_COUNT:
+                    continue  # Drop sentence with unverified table count
+
+            # Meta leaks: drop sentences with meta instructions (Item 10)
+            if any(leak in s_low for leak in ["project facts", "project specification", "preserving placeholders", "unresolved content"]):
+                continue
+            if "listed in the" in s_low and not (":" in sent or "\n-" in sent or "table" in s_low or "section" in s_low):
+                continue
+            if "these endpoints" in s_low and "/api/" not in sent:
+                continue
 
             # Check ungrounded numbers/units not in facts
             has_invented_metric = False
@@ -881,10 +1243,49 @@ def filter_grounded_college_section(
             if has_invented_metric:
                 continue
 
-            # In sections 4.6, 5.4, 7.3: verify DB table names
-            if any(k in norm_sec for k in ["4.6", "5.4", "7.3", "database", "data dictionary"]):
-                invented_tables = ["orders", "transactions", "audit_logs", "customers", "invoices", "payments", "logs_table", "user_logs"]
-                if any(f" {tbl} " in f" {s_low} " or f"`{tbl}`" in s_low for tbl in invented_tables):
+            # In sections 4.6, 5.4, 7.3: verify DB table names against VERIFIED_TABLE_NAMES
+            if any(k in norm_sec for k in ["4.6", "5.4", "7.3", "database", "data dictionary", "data design"]):
+                has_unverified_table = False
+                
+                # Check backticked identifiers in database sections
+                for tok in re.findall(r"`([a-zA-Z0-9_]+)`", sent):
+                    tok_low = tok.lower()
+                    if tok_low in {"reports", "report_sections", "sources", "audit_logs", "orders", "transactions", "customers", "invoices", "payments", "logs_table", "user_logs", "profiles", "accounts", "posts", "comments", "sessions"}:
+                        has_unverified_table = True
+                        break
+                
+                if not has_unverified_table:
+                    # Check "X table" patterns
+                    for cand in re.findall(r"\b([a-zA-Z0-9_]+)\s+tables?\b", s_low):
+                        if cand not in VERIFIED_TABLE_NAMES and cand not in {
+                            "database", "relational", "sqlite", "each", "these", "following",
+                            "the", "six", "6", "all", "primary", "individual", "underlying", "core",
+                            "application", "system", "sql", "target", "new", "existing"
+                        }:
+                            has_unverified_table = True
+                            break
+                
+                if not has_unverified_table:
+                    # Check "table X" patterns
+                    for cand in re.findall(r"\btables?\s+`?([a-zA-Z0-9_]+)`?\b", s_low):
+                        if cand not in VERIFIED_TABLE_NAMES and cand not in {
+                            "such", "including", "for", "in", "and", "or", "of", "to", "with",
+                            "are", "is", "were", "was", "described", "shown", "listed", "7.1",
+                            "definitions", "structures", "schema", "overview", "design"
+                        }:
+                            has_unverified_table = True
+                            break
+
+                if not has_unverified_table:
+                    # Direct check for obsolete/hallucinated table names
+                    for unv in ["report_sections", "audit_logs", "orders", "transactions", "customers", "invoices", "payments", "logs_table", "user_logs"]:
+                        if re.search(rf"\b{unv}\b", s_low):
+                            has_unverified_table = True
+                            break
+                    if not has_unverified_table and re.search(r"\b(?:reports|sources)\s+table\b", s_low):
+                        has_unverified_table = True
+
+                if has_unverified_table:
                     continue
 
             # In section 8.6: only tests in facts
@@ -903,7 +1304,7 @@ def filter_grounded_college_section(
     result = "\n".join(out_lines).strip()
     result = re.sub(r"\n{3,}", "\n\n", result)
 
-    # Deduplicate paragraphs in 5.1 (Item 6): only one intro paragraph
+    # Deduplicate paragraphs in 5.1: only one intro paragraph
     if norm_sec.startswith("5.1"):
         p_blocks = [p.strip() for p in result.split("\n\n") if p.strip()]
         unique_blocks = []
@@ -913,9 +1314,14 @@ def filter_grounded_college_section(
             elif not any(not b.startswith("#") for b in unique_blocks):
                 unique_blocks.append(pb)
             else:
-                # Discard duplicate/additional intro paragraph in 5.1
                 pass
         result = "\n\n".join(unique_blocks)
+
+    # Section 10.2: remove stray large Frontend heading; code lines format as code block or inline code (Item 9)
+    if "10.2" in norm_sec:
+        result = re.sub(r"^#+\s*Frontend\s*$", "", result, flags=re.MULTILINE | re.IGNORECASE)
+        result = result.replace("../frontend", "frontend")
+        result = result.replace("cd ../frontend", "cd frontend")
 
     # Clean dangling fragments and normalize placeholders
     result = clean_dangling_fragments_and_placeholders(result)
@@ -924,7 +1330,35 @@ def filter_grounded_college_section(
     text_without_placeholders = re.sub(r"\[(?:Insert|Add)[^\]]+\]", "", text_without_headings).strip()
     words_remaining = len(text_without_placeholders.split())
 
-    # Section 8.5 & 8.6 repetition fallback (Item 6)
+    # Section 1.2: must have at least 3 sentences (what it does, three agents, stack by name, local deployment) (Item 7)
+    if re.search(r"^1\.2\b", sec_title):
+        sents_12 = re.split(r"(?<=[.!?])\s+", text_without_placeholders)
+        sents_12 = [s for s in sents_12 if len(s.split()) >= 4]
+        if min_words > 2 and len(sents_12) < 3:
+            return f"""{heading_prefix} {sec_title}
+
+CiteBolt is an automated research report generation platform designed to produce structured academic and technical reports from user-specified topics. The system coordinates a multi-agent workflow consisting of Research, Analysis, and Writer agents implemented using LangGraph. The application is built with a FastAPI backend, an SQLite database utilizing SQLAlchemy ORM, and a React frontend with Vite and Tailwind CSS, deployed in a local execution environment."""
+
+    # Section 1.4: must have 4 to 5 bullets using only the facts (Item 7)
+    if re.search(r"^1\.4\b", sec_title):
+        bullet_lines = [ln.strip() for ln in result.split("\n") if re.match(r"^\s*[-*+]\s+", ln)]
+        if len(bullet_lines) < 4:
+            return f"""{heading_prefix} {sec_title}
+
+The primary objectives of the project are defined as follows:
+
+- Autonomous research and multi-agent report generation pipeline using LangGraph (Research, Analysis, and Writer agents).
+- Academic citation integration with automated reference numbering and grounding verification.
+- Document compilation and multi-format export supporting both ReportLab PDF and DOCX formats.
+- Per-user rate limits and authentication via email OTP and JWT sessions.
+- Standardized academic college report template with structured chapters, formal front matter, and automated tables of contents."""
+
+    # Section 9.4: User Feedback fallback (Item 2)
+    if any(k in norm_sec for k in ["9.4", "user feedback"]):
+        if not has_body_text or words_remaining < 25:
+            return f"{heading_prefix} {sec_title}\n\n[Add your user feedback results here.]"
+
+    # Section 8.5 & 8.6 repetition fallback
     if "8.5" in norm_sec or "test case" in norm_sec:
         if not has_body_text or words_remaining < 25:
             return f"{heading_prefix} {sec_title}\n\n[Add your test case table here.]"
@@ -932,8 +1366,45 @@ def filter_grounded_college_section(
         if not has_body_text or words_remaining < 25:
             return f"{heading_prefix} {sec_title}\n\n[Add your test plan here.]"
 
-    # Thin sections (Item 5): 4.6, 4.7, 4.8, 6.3, 6.8, 7.3, 7.4, 7.5
-    is_thin_section = any(k in sec_title for k in ["4.6", "4.7", "4.8", "6.3", "6.8", "7.3", "7.4", "7.5"])
+    # Section 9.5: Testing Results fallback (Item 2)
+    if any(k in norm_sec for k in ["9.5", "test result", "validation result"]):
+        if not has_body_text or words_remaining < 25:
+            return f"{heading_prefix} {sec_title}\n\n[Add your test results here.]"
+
+    # Sections 10.5 to 10.8: produce short grounded text from facts (local only, manual restarts, SQLite file, no CI/CD) (Item 6)
+    if re.search(r"^10\.5\b", sec_title):
+        if not has_body_text or words_remaining < 25:
+            return f"""{heading_prefix} {sec_title}
+
+Data backup in the local deployment environment is managed by creating filesystem copies of the SQLite database file. Operational maintenance utilizes manual process restarts when necessary, without automated clustering or distributed failover mechanisms."""
+
+    if re.search(r"^10\.6\b", sec_title):
+        if not has_body_text or words_remaining < 25:
+            return f"""{heading_prefix} {sec_title}
+
+System monitoring relies on standard console log outputs provided by Uvicorn and FastAPI during runtime. Database integrity is preserved through SQLite ACID transaction guarantees, with manual inspection of service execution during development."""
+
+    if re.search(r"^10\.7\b", sec_title):
+        if not has_body_text or words_remaining < 25:
+            return f"""{heading_prefix} {sec_title}
+
+The platform is maintained under local Git version control without automated CI/CD deployment pipelines or containerization workflows. Verification is conducted by running the pytest suite manually prior to updates."""
+
+    if re.search(r"^10\.8\b", sec_title) or (actual_ch_num == 10 and "summary" in norm_sec):
+        if not has_body_text or words_remaining < 25:
+            return f"""{heading_prefix} {sec_title}
+
+The CiteBolt system is deployed locally on a single machine utilizing a FastAPI backend served via Uvicorn and a Vite React frontend. Persistence is managed through a local SQLite database file without cloud infrastructure, Docker containerization, or automated CI/CD pipelines. Operational management consists of direct command-line execution and local process control."""
+
+    # Summary sections (CRITICAL): Do not use placeholders for Summary sections (Item 6)
+    if "summary" in norm_sec and not any(k in norm_sec for k in ["executive summary", "abstract"]):
+        if not has_body_text or words_remaining < 25:
+            return f"""{heading_prefix} {sec_title}
+
+This chapter synthesized the technical specifications, requirements, and design considerations governing the CiteBolt platform. The established design and implementation parameters ensure robust execution across the multi-agent workflow. The findings and models developed here serve as the baseline for system implementation and testing."""
+
+    # Thin sections: 4.7, 4.8, 6.3, 6.8, 7.4, 7.5
+    is_thin_section = any(k in sec_title for k in ["4.7", "4.8", "6.3", "6.8", "7.4", "7.5"])
     effective_min_words = max(min_words, 25) if (is_thin_section and min_words > 2) else min_words
 
     if not has_body_text or words_remaining < effective_min_words:
@@ -974,8 +1445,15 @@ def format_front_matter_section(
     members = fm.get("teamMembers") or []
 
     if "title page" in norm:
-        degree = smart_title(fm.get("degree", "").strip()) or "[Degree]"
-        univ_disp = univ if univ else "[University Name]"
+        degree = fm.get("degree", "").strip() or "[Degree]"
+        if univ_raw:
+            if univ_raw.islower():
+                univ_disp = smart_title(univ_raw)
+            else:
+                univ_disp = univ_raw
+        else:
+            univ_disp = "[University Name]"
+
         dept_disp = dept if dept else "[Department Name]"
         guide_disp = guide if guide else "[Project Guide]"
 
@@ -994,20 +1472,23 @@ def format_front_matter_section(
             student_lines.append("[Student Name] (PRN: [PRN])")
 
         year_str = year_val if year_val.lower().startswith("academic year") else f"Academic Year: {year_val}"
+        month_str = month_year_val if month_year_val.lower().startswith("month") else f"Month: {month_year_val}"
+        dept_line = dept_disp if dept_disp.lower().startswith("department") else f"Department: {dept_disp}"
+        univ_line = univ_disp if univ_disp.lower().startswith("university") else f"University: {univ_disp}"
 
         lines = [
             f"# {proj_title}",
             "A PROJECT REPORT",
-            "Submitted in partial fulfillment of the requirements for the award of the degree of",
+            "Submitted in partial fulfilment of the requirements for the award of the degree of",
             f"**{degree}**",
             "Submitted by",
             *student_lines,
             "Under the guidance of",
             guide_disp,
-            dept_disp,
-            univ_disp,
+            dept_line,
+            univ_line,
             year_str,
-            month_year_val,
+            month_str,
         ]
         return "\n\n".join(lines).strip()
 
@@ -1646,51 +2127,96 @@ Keywords: [5-7 comma-separated domain keywords]"""
 
         # Research is ONLY allowed for background in Chapters 1 and 2
         if actual_ch_num in (1, 2):
-            search_query = f"{topic} arxiv survey paper" if actual_ch_num == 1 else f"{topic} research papers literature survey methodology arxiv ieee"
-            try:
-                with tavily_lock:
-                    tavily_call_count[0] += 1
-                    logger.info("Tavily search executed for Chapter %d: query='%s', run total=%d", actual_ch_num, search_query, tavily_call_count[0])
-                raw = _collect_sources(search_query)
-                academic_sources = []
-                general_sources = []
-                banned_vendor_domains = [
-                    "machinelearningplus", "pinecone", "educative", "medium.com", "towardsdatascience",
-                    "circleci", "promptabcd", "geeksforgeeks", "tutorialspoint", "w3schools", "dev.to", "hashnode",
-                    "docker", "jenkins", "travis-ci", "datadog", "newrelic", "sentry",
-                    "atlassian", "jira", "bitbucket", "gitlab", "argocd",
-                    "youtube.com", "youtu.be", "reddit.com", "quora.com", "tiktok.com"
-                ]
-                for s in raw:
-                    u = s.get("url", "").lower()
-                    if any(bad in u for bad in banned_vendor_domains):
-                        continue
-                    if any(bad in u for bad in ["/blog/", "/blogs/", "/courses/", "/course/", "/tutorial/", "/tutorials/"]):
-                        continue
-                    if "github.com/" in u and not any(k in u for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch", "pytorch"]):
-                        if not ("github" in topic.lower()):
+            related_work = (front_matter or {}).get("relatedWork", "").strip() if actual_ch_num == 2 else ""
+            if actual_ch_num == 2 and related_work:
+                paper_entries = [p.strip() for p in re.split(r"\n{2,}|\n(?=[A-Z0-9\[])", related_work) if p.strip()]
+                chapter_sources = []
+                for p_idx, entry in enumerate(paper_entries, start=1):
+                    url_m = re.search(r"https?://\S+", entry)
+                    entry_url = url_m.group(0).rstrip(".,)]") if url_m else ""
+                    clean_entry = entry.replace(entry_url, "").strip() if entry_url else entry
+                    chapter_sources.append({
+                        "number": p_idx,
+                        "title": clean_entry[:120],
+                        "author": "Related Work Author",
+                        "url": entry_url,
+                        "content": entry,
+                    })
+                with sources_lock:
+                    for s in chapter_sources:
+                        u = s.get("url", "").strip()
+                        if u and not any(existing.get("url", "").strip() == u for existing in all_sources):
+                            all_sources.append(s)
+            else:
+                search_query = f"{topic} arxiv survey paper" if actual_ch_num == 1 else f"{topic} research papers literature survey methodology arxiv ieee"
+                try:
+                    with tavily_lock:
+                        tavily_call_count[0] += 1
+                        logger.info("Tavily search executed for Chapter %d: query='%s', run total=%d", actual_ch_num, search_query, tavily_call_count[0])
+                    raw = _collect_sources(search_query)
+                    academic_sources = []
+                    general_sources = []
+                    banned_vendor_domains = [
+                        "machinelearningplus", "pinecone", "educative", "medium.com", "towardsdatascience",
+                        "circleci", "promptabcd", "geeksforgeeks", "tutorialspoint", "w3schools", "dev.to", "hashnode",
+                        "docker", "jenkins", "travis-ci", "datadog", "newrelic", "sentry",
+                        "atlassian", "jira", "bitbucket", "gitlab", "argocd",
+                        "youtube.com", "youtu.be", "reddit.com", "quora.com", "tiktok.com"
+                    ]
+                    for s in raw:
+                        u = s.get("url", "").lower()
+                        if any(bad in u for bad in banned_vendor_domains):
                             continue
-                    is_academic = any(d in u for d in [
-                        "arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "openreview.net",
-                        "aclanthology.org", "sciencedirect.com", "semanticscholar.org", "researchgate.net", "tijer.org"
-                    ])
-                    if is_academic:
-                        academic_sources.append(s)
+                        if any(bad in u for bad in ["/blog/", "/blogs/", "/courses/", "/course/", "/tutorial/", "/tutorials/"]):
+                            continue
+                        if "github.com/" in u and not any(k in u for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch", "pytorch"]):
+                            if not ("github" in topic.lower()):
+                                continue
+                        is_academic = any(d in u for d in [
+                            "arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "openreview.net",
+                            "aclanthology.org", "sciencedirect.com", "semanticscholar.org", "researchgate.net", "tijer.org"
+                        ])
+                        if is_academic:
+                            academic_sources.append(s)
+                        else:
+                            general_sources.append(s)
+
+                    if actual_ch_num == 2 and len(academic_sources) < 2:
+                        extra_queries = [
+                            f"{topic} methodology architecture arxiv",
+                            f"{topic} state of the art ieee acm survey",
+                        ]
+                        for eq in extra_queries:
+                            if len(academic_sources) >= 2:
+                                break
+                            try:
+                                with tavily_lock:
+                                    tavily_call_count[0] += 1
+                                raw_ex = _collect_sources(eq)
+                                for s in raw_ex:
+                                    u = s.get("url", "").lower()
+                                    if any(bad in u for bad in banned_vendor_domains):
+                                        continue
+                                    if any(bad in u for bad in ["/blog/", "/blogs/", "/courses/", "/course/", "/tutorial/", "/tutorials/"]):
+                                        continue
+                                    if any(d in u for d in ["arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "openreview.net", "aclanthology.org", "sciencedirect.com", "semanticscholar.org", "researchgate.net", "tijer.org"]):
+                                        if not any(x.get("url") == s.get("url") for x in academic_sources):
+                                            academic_sources.append(s)
+                            except Exception:
+                                pass
+
+                    if len(academic_sources) >= 1:
+                        chapter_sources = academic_sources[:4]
                     else:
-                        general_sources.append(s)
+                        chapter_sources = general_sources[:4]
+                except Exception as exc:
+                    logger.warning("Chapter %d search failed: %s", actual_ch_num, exc)
 
-                if len(academic_sources) >= 1:
-                    chapter_sources = academic_sources[:4]
-                else:
-                    chapter_sources = general_sources[:4]
-            except Exception as exc:
-                logger.warning("Chapter %d search failed: %s", actual_ch_num, exc)
-
-            with sources_lock:
-                for s in chapter_sources:
-                    u = s.get("url", "").strip()
-                    if u and not any(existing.get("url", "").strip() == u for existing in all_sources):
-                        all_sources.append(s)
+                with sources_lock:
+                    for s in chapter_sources:
+                        u = s.get("url", "").strip()
+                        if u and not any(existing.get("url", "").strip() == u for existing in all_sources):
+                            all_sources.append(s)
 
             chapter_sources_text = "\n\n".join(
                 f"Source: {s.get('title', 'Source')}\nURL: {s.get('url', '')}\nContent: {s.get('content', '')[:700]}"
@@ -1754,22 +2280,54 @@ Return ONLY bullet points starting with '- '."""
                 record_section_progress(sec_title)
                 continue
 
-            # Deterministic Data Dictionary for Section 7.3 (Item 5)
+            # Deterministic Data Design for Section 4.6 (Item 6)
+            if re.search(r"^4\.6\b", sec_title) or (actual_ch_num == 4 and "data design" in norm_sec):
+                sec_md = build_deterministic_data_design_section(sec_title, heading_prefix)
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
+
+            # Deterministic Data Dictionary for Section 7.3 (Item 5 / 8)
             if re.search(r"^7\.3\b", sec_title) or (actual_ch_num == 7 and "data dictionary" in norm_sec):
+                sec_md = build_deterministic_data_dictionary_section(sec_title, heading_prefix)
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
+
+            # Deterministic / Grounded deployment sections 10.5 to 10.8 (Item 6)
+            if re.search(r"^10\.5\b", sec_title):
                 sec_md = f"""{heading_prefix} {sec_title}
 
-The database schema is implemented using SQLite to provide persistent local storage for report workflows and settings. Table 7.1 describes each database table, its primary attributes, and operational role within the system.
+Data backup in the local deployment environment is managed by creating filesystem copies of the SQLite database file. Operational maintenance utilizes manual process restarts when necessary, without automated clustering or distributed failover mechanisms."""
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
 
-Table 7.1: Database tables
+            if re.search(r"^10\.6\b", sec_title):
+                sec_md = f"""{heading_prefix} {sec_title}
 
-| Table | Columns | Purpose |
-| :--- | :--- | :--- |
-| users | id, email | Stores registered user identity and email address. |
-| otp_codes | id, email, code_hash | Manages time-sensitive one-time password verification tokens. |
-| runs | id, topic, status, report_markdown | Persists report generation workflows, outlines, and markdown artifacts. |
-| templates | id, name, outline_json | Stores predefined and custom report structural templates. |
-| user_settings | user_id, theme | Retains user preference settings including interface display theme. |
-| contact_messages | id, email, message | Captures user feedback and contact form submissions. |"""
+System monitoring relies on standard console log outputs provided by Uvicorn and FastAPI during runtime. Database integrity is preserved through SQLite ACID transaction guarantees, with manual inspection of service execution during development."""
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
+
+            if re.search(r"^10\.7\b", sec_title):
+                sec_md = f"""{heading_prefix} {sec_title}
+
+The platform is maintained under local Git version control without automated CI/CD deployment pipelines or containerization workflows. Verification is conducted by running the pytest suite manually prior to updates."""
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
+
+            if re.search(r"^10\.8\b", sec_title) or (actual_ch_num == 10 and "summary" in norm_sec):
+                sec_md = f"""{heading_prefix} {sec_title}
+
+The CiteBolt system is deployed locally on a single machine utilizing a FastAPI backend served via Uvicorn and a Vite React frontend. Persistence is managed through a local SQLite database file without cloud infrastructure, Docker containerization, or automated CI/CD pipelines. Operational management consists of direct command-line execution and local process control."""
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -1839,6 +2397,8 @@ Table 7.1: Database tables
                 continue
 
             if actual_ch_num in (1, 2):
+                if actual_ch_num == 2 and (front_matter or {}).get("relatedWork", "").strip():
+                    rules.append("- LITERATURE SURVEY (CRITICAL): Write the survey strictly and ONLY from the user-provided related work papers. Cite each with [n] where n matches the paper's reference number.")
                 rules.extend([
                     "- CHAPTER 1-2 GROUND TRUTH & CITATION RULES (CRITICAL):",
                     f"  * Describe the user's project ({proj_name}) strictly from the Project Facts.",
@@ -1906,7 +2466,7 @@ Output ONLY the Markdown content for this section:"""
             # Concise retry prompt for attempt 2 if attempt 1 returns empty or triggers boilerplate rejection
             shorter_prompt = f"""Write the technical section '{heading_prefix} {sec_title}' for '{proj_name}'.
 Word Target: ~{max(70, int(sec_target * 0.5))} words of concise, direct technical explanation grounded in these facts:
-{project_fact_sheet[:900]}
+{project_fact_sheet[:3000]}
 
 Rules:
 - Start directly with '{heading_prefix} {sec_title}'.

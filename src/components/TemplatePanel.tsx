@@ -642,6 +642,17 @@ export default function TemplatePanel({
                   className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
                 />
               </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-medium text-muted">Related work / papers (optional)</label>
+                <textarea
+                  rows={3}
+                  value={collegeForm.relatedWork || ""}
+                  onChange={(e) => handleCollegeFieldChange("relatedWork", e.target.value)}
+                  placeholder="Paste titles, authors, years, and URLs of papers to include in the Literature Survey..."
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-xs text-fg focus:outline-none"
+                />
+              </div>
             </div>
           </div>
         </div>

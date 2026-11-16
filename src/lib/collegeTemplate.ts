@@ -28,6 +28,7 @@ export interface CollegeFrontMatter {
   deploymentStatus?: string;
   databaseTables?: string;
   mainEndpoints?: string;
+  relatedWork?: string;
 }
 
 export const DEFAULT_COLLEGE_FRONT_MATTER: CollegeFrontMatter = {
@@ -47,6 +48,7 @@ export const DEFAULT_COLLEGE_FRONT_MATTER: CollegeFrontMatter = {
   deploymentStatus: "",
   databaseTables: "",
   mainEndpoints: "",
+  relatedWork: "",
 };
 
 export const COLLEGE_OUTLINE_TEMPLATE: OutlineSection[] = [

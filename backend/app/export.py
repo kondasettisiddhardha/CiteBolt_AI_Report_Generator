@@ -802,7 +802,7 @@ def _render_pdf_reportlab(
                     while len(row_cells) < num_cols:
                         row_cells.append(Paragraph("", style_to_use))
                     table_data.append(row_cells)
-                t = Table(table_data, colWidths=[col_width] * num_cols)
+                t = Table(table_data, colWidths=[col_width] * num_cols, repeatRows=1 if is_template else 0)
                 if is_template:
                     t.setStyle(
                         TableStyle([
@@ -845,6 +845,7 @@ def _render_pdf_reportlab(
                 if (
                     norm_clean == "a project report"
                     or norm_clean.startswith("submitted in partial fulfillment")
+                    or norm_clean.startswith("submitted in partial fulfilment")
                     or norm_clean == "submitted by"
                     or norm_clean.startswith("under the guidance of")
                     or prev_was_guide
@@ -1369,6 +1370,7 @@ def markdown_to_docx(
                 if (
                     norm_p == "a project report"
                     or norm_p.startswith("submitted in partial fulfillment")
+                    or norm_p.startswith("submitted in partial fulfilment")
                     or norm_p == "submitted by"
                     or norm_p.startswith("under the guidance of")
                     or prev_was_guide
