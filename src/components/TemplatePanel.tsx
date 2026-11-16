@@ -524,7 +524,7 @@ export default function TemplatePanel({
             </div>
 
             <div>
-              <label className="block text-[11px] font-medium text-muted">Department</label>
+              <label className="block text-[11px] font-medium text-muted">Department (optional)</label>
               <input
                 type="text"
                 value={collegeForm.department}

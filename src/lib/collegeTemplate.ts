@@ -18,7 +18,7 @@ export interface CollegeFrontMatter {
   coordinator: string;
   hod: string;
   dean: string;
-  department: string;
+  department?: string;
   university: string;
   academicYear: string;
   submissionMonthYear: string;

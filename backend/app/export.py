@@ -153,6 +153,17 @@ def _md_inline_to_reportlab(text: str, is_template: bool = False) -> str:
     for sym in ("✓", "✗", "✔", "✘"):
         if sym in escaped:
             escaped = escaped.replace(sym, f'<font face="DejaVuSans">{sym}</font>')
+
+    # Allow URLs to wrap gracefully at slashes, dots, hyphens, and underscores using zero-width spaces
+    def _break_url(match: re.Match[str]) -> str:
+        u = match.group(0)
+        if "://" in u:
+            proto, rest = u.split("://", 1)
+            broken_rest = re.sub(r"([/\.\-_])", r"\1&#8203;", rest)
+            return f"{proto}://{broken_rest}"
+        return u
+
+    escaped = re.sub(r"(?<!href=\")https?://[^\s<>\"]+", _break_url, escaped)
     return escaped
 
 
@@ -469,6 +480,15 @@ def _render_pdf_reportlab(
         textColor=colors.black if is_template else colors.HexColor("#1f2937"),
         spaceAfter=8 if is_template else 7,
     )
+    references_entry_style = ParagraphStyle(
+        "ReferencesEntry",
+        fontName=font_regular,
+        fontSize=12 if is_template else 10,
+        leading=18 if is_template else 14.5,
+        alignment=TA_LEFT,
+        textColor=colors.black if is_template else colors.HexColor("#1f2937"),
+        spaceAfter=8 if is_template else 7,
+    )
     bullet_style = ParagraphStyle(
         "Bullet",
         fontName=font_regular,
@@ -654,6 +674,7 @@ def _render_pdf_reportlab(
     # Body elements
     skip_until_next_heading = False
     in_title_page = is_template
+    in_references = False
     title_h1_rendered = False
     title_to_use = smart_title(meta.get("title") or title or topic)
     next_is_guide = False
@@ -684,6 +705,7 @@ def _render_pdf_reportlab(
         if kind in ("h1", "h2", "h3"):
             skip_until_next_heading = False
             norm_heading = text.lower()
+            in_references = ("references" in norm_heading)
             is_fm_major = is_template and any(
                 k in norm_heading
                 for k in [
@@ -859,6 +881,8 @@ def _render_pdf_reportlab(
                 elif re.match(r"^(?:Fig\.|Figure)\s+\d+\.\d+", text, re.IGNORECASE):
                     cap_p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style)
                     story.append(cap_p)
+                elif in_references:
+                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), references_entry_style))
                 else:
                     story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), body_style))
 

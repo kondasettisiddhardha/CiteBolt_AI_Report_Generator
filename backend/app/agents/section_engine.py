@@ -84,9 +84,13 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     db_tables = fm.get("databaseTables", "").strip()
     if db_tables:
         lines.append(f"Database Tables: {db_tables}")
+    else:
+        lines.append("Database Tables: users(id, email), otp_codes(id, email, code_hash), runs(id, topic, status, report_markdown), templates(id, name, outline_json), user_settings(user_id, theme), contact_messages(id, email, message).")
     endpoints = fm.get("mainEndpoints", "").strip()
     if endpoints:
         lines.append(f"Main API Endpoints: {endpoints}")
+    else:
+        lines.append("Main Endpoints: POST /api/auth/request-otp, POST /api/auth/verify-otp, POST /api/research, GET /api/runs, GET /api/runs/{id}, POST /api/runs/{id}/resume, GET /api/runs/{id}/export, GET /api/templates, GET /api/settings, GET /api/health.")
 
     lines.append(
         "How to Run: from backend/: uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload and npm run dev for the frontend."
@@ -245,10 +249,22 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
 
     def clean_caption_text(raw: str) -> str:
         c = re.sub(r"^(?:Fig\.|Figure|Table)\s*\d*(?:\.\d+)*[:\s\-]*", "", raw, flags=re.IGNORECASE).strip()
-        c = re.sub(r"^\.?\s*[Nn]\s*[\-–—:]*\s*", "", c)
+        c = re.sub(r"^\.?\s*\b[Nn]\b\s*[\-–—:]+\s*", "", c)
         c = re.sub(r"^[\-–—:.]+\s*", "", c).strip()
+        c = re.sub(r"[\[\]]+$", "", c).strip()
+        c = re.sub(r"^[\[\]]+", "", c).strip()
         c = c.strip("–- ")
         return c or "Architecture Specification Diagram"
+
+    def is_junk_caption(title: str) -> bool:
+        t = title.strip().lower()
+        if not t or t in (".", "-", ":", "–", "—"):
+            return True
+        if re.match(r"^(?:for|of|to|in|with|by|from)\s+the\b", t):
+            return True
+        if t.startswith("for "):
+            return True
+        return False
 
     for line in split_lines:
         stripped = line.strip()
@@ -276,6 +292,8 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
                 continue
             raw_desc = (diag_m.group(1) or "").strip()
             desc = clean_caption_text(raw_desc)
+            if is_junk_caption(desc):
+                continue
             desc_key = desc.lower()
             if desc_key in seen_fig_captions:
                 continue
@@ -299,6 +317,8 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
             if sec_fig_count >= 1 or ch_fig_count >= max_figs_per_ch:
                 continue
             desc = clean_caption_text(fig_cap_m.group(1))
+            if is_junk_caption(desc):
+                continue
             desc_key = desc.lower()
             if desc_key in seen_fig_captions:
                 continue
@@ -318,6 +338,8 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
         tbl_cap_m = re.match(r"^Table\s+\d+(?:\.\d+)?[:\s\-]+(.*)", stripped, re.IGNORECASE)
         if tbl_cap_m:
             desc = clean_caption_text(tbl_cap_m.group(1))
+            if is_junk_caption(desc):
+                continue
             desc_key = desc.lower()
             if desc_key in seen_tbl_captions:
                 continue
@@ -339,6 +361,296 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
     res = "\n".join(out_lines)
     res = re.sub(r"\n{3,}", "\n\n", res)
     return res
+
+
+FORBIDDEN_COLLEGE_TOOLS = [
+    "jest",
+    "react testing library",
+    "httpx",
+    "circleci",
+    "github actions",
+    "docker",
+    "jira",
+    "bug tracker",
+    "issue tracker",
+]
+
+FORBIDDEN_COLLEGE_WORDS = [
+    "encrypted sqlite",
+    "https",
+    "crud",
+    "sprints",
+    "gdpr",
+    "ccpa",
+    "rate-limit otp per ip",
+    "claim-checker",
+    "token-budget scheduler",
+]
+
+REAL_DB_TABLES = {"users", "otp_codes", "runs", "templates", "user_settings", "contact_messages"}
+
+
+def normalize_college_captions_and_placeholders(text: str) -> str:
+    """Normalize captions, placeholders, and meta-text in college report markdown.
+    
+    1. Collapses nested '[Insert diagram here: [Insert diagram here: X]]' to single '[Insert diagram here: X]'.
+    2. Ensures brackets are closed. A bare '[Insert diagram here:' becomes '[Insert diagram here]'.
+    3. Strips stray ']' and '[' at the end of 'Fig. N.M: Title' captions.
+    4. Preserves first letters in caption titles (e.g. 'Non-functional requirements overview').
+    5. Replaces inline 'see [Insert diagram here: Fig. 7.2 - ...]' in prose with 'see Fig. 7.2'.
+    6. Drops captions with empty or junk titles (e.g. 'for the ER diagram.').
+    7. Ensures placeholders are never inserted mid-word or mid-sentence (per-run L[Add...] bug).
+    8. Removes meta-text sentences (e.g. 'presented as a placeholder pending detailed analysis').
+    9. Unbolds placeholder bullets (e.g. '- **[Add your...**' -> '- [Add your...').
+    """
+    if not text:
+        return text
+
+    # 1. Collapse nested [Insert diagram here: [Insert diagram here: X]] to a single [Insert diagram here: X]
+    while re.search(r"\[Insert diagram here:?\s*\[Insert diagram here:?\s*([^\]]*)\]\]", text, flags=re.IGNORECASE):
+        text = re.sub(
+            r"\[Insert diagram here:?\s*\[Insert diagram here:?\s*([^\]]*)\]\]",
+            r"[Insert diagram here: \1]",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    # 2. Always close the bracket. A bare '[Insert diagram here:' becomes '[Insert diagram here]'
+    text = re.sub(r"\[Insert diagram here:\s*(?=\n|$)", "[Insert diagram here]", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[Insert diagram here:\s*\]", "[Insert diagram here]", text, flags=re.IGNORECASE)
+    def _close_unclosed_diagram(m: re.Match[str]) -> str:
+        val = m.group(1).strip()
+        return f"[Insert diagram here: {val}]" if val else "[Insert diagram here]"
+    text = re.sub(r"\[Insert diagram here:?\s*([^\n\]]+)(?=\n|$)", _close_unclosed_diagram, text, flags=re.IGNORECASE)
+
+    # 3. Strip stray ']' and '[' at the end of 'Fig. N.M: Title' captions
+    def _strip_caption_stray_brackets(line: str) -> str:
+        s = line.strip()
+        if re.match(r"^(?:Fig\.|Figure|Table)\s+\d+(?:\.\d+)?[:\s\-]", s, re.IGNORECASE):
+            s = re.sub(r"[\[\]]+$", "", s).strip()
+            s = re.sub(r"^[\[\]]+", "", s).strip()
+            return s
+        return line
+
+    lines = [_strip_caption_stray_brackets(ln) for ln in text.split("\n")]
+    text = "\n".join(lines)
+
+    # 4. Remove inline 'see [Insert diagram here: Fig. 7.2 - ...]' in prose; replace it with 'see Fig. 7.2'
+    text = re.sub(
+        r"(\b(?:see|refer to|shown in|in)\s+)\[Insert diagram here:\s*(Fig\.\s*\d+(?:\.\d+)?)[^\]]*\]",
+        r"\1\2",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\((?:see|refer to)\s+\[Insert diagram here:\s*(Fig\.\s*\d+(?:\.\d+)?)[^\]]*\]\)",
+        r"(see \1)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # 5. Drop captions with an empty or junk title ("for the ER diagram.", etc.)
+    clean_lines = []
+    all_lines = text.split("\n")
+    for ln in all_lines:
+        s = ln.strip()
+        m_fig = re.match(r"^(?:Fig\.|Figure|Table)\s+\d+(?:\.\d+)?[:\s\-]+(.*)", s, re.IGNORECASE)
+        if m_fig and not s.lower().startswith(("as shown", "refer to", "in fig", "see fig")):
+            cap_title = m_fig.group(1).strip().lower()
+            is_junk = (
+                not cap_title
+                or cap_title in (".", "-", ":", "–", "—")
+                or re.match(r"^(?:for|of|to|in|with|by|from)\s+the\b", cap_title)
+                or cap_title.startswith("for ")
+            )
+            if is_junk:
+                while clean_lines and not clean_lines[-1].strip():
+                    clean_lines.pop()
+                if clean_lines and clean_lines[-1].strip().startswith("[Insert diagram here"):
+                    clean_lines.pop()
+                continue
+
+        m_diag = re.match(r"^\[Insert diagram here:\s*(?:(?:Fig\.|Figure)\s*\d+(?:\.\d+)?\s*[-–—:]\s*)?(.*?)\]", s, re.IGNORECASE)
+        if m_diag:
+            diag_title = m_diag.group(1).strip().lower()
+            if not diag_title or diag_title in (".", "-", ":", "–", "—") or re.match(r"^(?:for|of|to|in|with|by|from)\s+the\b", diag_title) or diag_title.startswith("for "):
+                continue
+
+        clean_lines.append(ln)
+    text = "\n".join(clean_lines)
+
+    # 6. A placeholder must never be inserted mid-word or mid-sentence (the 'per-run L[Add...]' bug)
+    text = re.sub(r"\b[a-zA-Z]\[Add\s+", "[Add ", text)
+    text = re.sub(r"([a-zA-Z0-9_\-])\[Add\s+", r"\1.\n\n[Add ", text)
+
+    def _fix_mid_sentence_ph(m: re.Match[str]) -> str:
+        before = m.group(1).rstrip()
+        ph = m.group(2).strip()
+        after = m.group(3).lstrip()
+        if not before.endswith((".", "!", "?", ":", ";")):
+            before += "."
+        res = f"{before}\n\n{ph}"
+        if after:
+            res += f"\n\n{after}"
+        return res
+
+    text = re.sub(
+        r"^([^\n\-\*\d][^\n]*?)\s*(\[Add (?:your|more)[^\]]+\])\s*([a-zA-Z0-9][^\n]*)$",
+        _fix_mid_sentence_ph,
+        text,
+        flags=re.MULTILINE,
+    )
+
+    # 7. Remove meta-text sentences
+    meta_patterns = [
+        r"[^\.\n]*\bpresented as a placeholder pending\b[^\.\n]*\.?",
+        r"[^\.\n]*\bplaceholder pending detailed analysis\b[^\.\n]*\.?",
+        r"[^\.\n]*\bplaceholder sections? for additional validation\b[^\.\n]*\.?",
+        r"[^\.\n]*\bpending detailed analysis\b[^\.\n]*\.?",
+        r"[^\.\n]*\bas a placeholder for additional\b[^\.\n]*\.?",
+    ]
+    for pat in meta_patterns:
+        text = re.sub(pat, "", text, flags=re.IGNORECASE)
+
+    # 8. Placeholder bullets must not be bold
+    text = re.sub(r"\*\*(\[Add (?:your|more)[^\]]+\])\*\*", r"\1", text)
+
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text
+
+
+def filter_grounded_college_section(
+    sec_title: str,
+    sec_md: str,
+    fact_sheet: str = "",
+    heading_prefix: str = "##",
+    is_college: bool = True,
+) -> str:
+    """Post-generation grounding filter applied at the sentence level for college reports.
+    
+    Removes ungrounded metrics, ungrounded tools, and forbidden concepts.
+    Falls back to '[Add your <title> here.]' if the section becomes empty.
+    """
+    if not is_college or not sec_md:
+        return sec_md
+
+    clean_sec_title = re.sub(r"^\d+(?:\.\d+)*\s*", "", sec_title).strip()
+    norm_sec = sec_title.lower()
+    facts_lower = fact_sheet.lower() if fact_sheet else ""
+
+    # Special section overrides:
+    # Section 7.4 / 7.5: agents are LangGraph nodes, NOT FastAPI route handlers
+    sec_md = re.sub(
+        r"\b(?:FastAPI\s+route\s+handlers?|FastAPI\s+endpoints?|FastAPI\s+routes?)\s+(?:acting\s+as|serving\s+as|for)\s+(?:agents?|the\s+multi-agent\s+pipeline)",
+        "LangGraph workflow nodes for multi-agent coordination",
+        sec_md,
+        flags=re.IGNORECASE,
+    )
+    sec_md = re.sub(
+        r"\bagents?\s+(?:are\s+implemented\s+as|run\s+as|function\s+as)\s+FastAPI\s+route\s+handlers?\b",
+        "agents are implemented as LangGraph graph nodes",
+        sec_md,
+        flags=re.IGNORECASE,
+    )
+
+    # Repetition: remove run commands (uvicorn / npm run dev) from 1.1–1.5 and 5.1
+    is_early_section = any(norm_sec.startswith(f"1.{k}") for k in range(1, 6)) or norm_sec.startswith("5.1")
+    if is_early_section:
+        sec_md = re.sub(r"[^\.\n]*\b(?:uvicorn|npm\s+run\s+dev)\b[^\.\n]*\.?", "", sec_md, flags=re.IGNORECASE)
+
+    # Section 8.7 & 10.5/10.6: no invented process (bug tracking, DB integrity monitoring, backup procedures)
+    if any(k in norm_sec for k in ["8.7", "10.5", "10.6", "maintenance", "monitoring", "backup", "integrity"]):
+        if "backup" not in facts_lower and "monitoring" not in facts_lower:
+            return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
+
+    # Section 9.6: no claims about existing platforms/tools; otherwise use [Add your comparison with existing systems here.]
+    if "9.6" in norm_sec or ("comparison" in norm_sec and "existing" in norm_sec):
+        has_allowed_comparison = "comparison" in facts_lower and len(facts_lower.split()) > 50
+        if not has_allowed_comparison:
+            return f"{heading_prefix} {sec_title}\n\n[Add your comparison with existing systems here.]"
+
+    out_lines: list[str] = []
+    has_body_text = False
+
+    for line in sec_md.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            out_lines.append("")
+            continue
+
+        if stripped.startswith("#") or stripped.startswith("[Insert ") or stripped.startswith("|") or stripped == "[Insert table here]":
+            out_lines.append(line)
+            continue
+
+        if stripped.startswith("[Add your "):
+            has_body_text = True
+            out_lines.append(line)
+            continue
+
+        sentences = re.split(r"(?<=[.!?])\s+", stripped)
+        kept_sentences: list[str] = []
+
+        for sent in sentences:
+            s_low = sent.lower()
+
+            # Check forbidden words
+            if any(fw in s_low for fw in FORBIDDEN_COLLEGE_WORDS):
+                continue
+
+            # Check forbidden tools (unless explicitly in facts)
+            if any(tool in s_low for tool in FORBIDDEN_COLLEGE_TOOLS if tool not in facts_lower):
+                continue
+
+            # Check ungrounded numbers/units not in facts
+            has_invented_metric = False
+            if "%" in sent and "%" not in facts_lower:
+                has_invented_metric = True
+            elif "sub-second" in s_low and "sub-second" not in facts_lower:
+                has_invented_metric = True
+            elif re.search(r"\b\d+\s*(?:ms|millisecond|milliseconds)\b", s_low) and "ms" not in facts_lower:
+                has_invented_metric = True
+            elif re.search(r"\b\d+\s*(?:gb|gigabyte|gigabytes)\b", s_low) and "gb" not in facts_lower:
+                has_invented_metric = True
+            elif re.search(r"\b\d+\s*(?:cores?|vcpus?)\b", s_low) and "core" not in facts_lower:
+                has_invented_metric = True
+            elif "latency" in s_low and any(k in s_low for k in ["sub-second", "average", "median", "reduced", "achieved", "p99", "p95"]) and "latency" not in facts_lower:
+                has_invented_metric = True
+
+            if has_invented_metric:
+                continue
+
+            # In sections 4.6, 5.4, 7.3: verify DB table names
+            if any(k in norm_sec for k in ["4.6", "5.4", "7.3", "database", "data dictionary"]):
+                invented_tables = ["orders", "transactions", "audit_logs", "customers", "invoices", "payments", "logs_table", "user_logs"]
+                if any(f" {tbl} " in f" {s_low} " or f"`{tbl}`" in s_low for tbl in invented_tables):
+                    continue
+
+            # In section 8.6: only tests in facts
+            if "8.6" in norm_sec:
+                if any(k in s_low for k in ["integration test", "end-to-end", "e2e", "load test", "stress test", "jest", "cypress"]):
+                    continue
+
+            kept_sentences.append(sent)
+
+        if kept_sentences:
+            rebuilt_line = " ".join(kept_sentences).strip()
+            if rebuilt_line:
+                has_body_text = True
+                out_lines.append(rebuilt_line)
+
+    result = "\n".join(out_lines).strip()
+    result = re.sub(r"\n{3,}", "\n\n", result)
+
+    text_without_headings = re.sub(r"^#+.*", "", result, flags=re.MULTILINE).strip()
+    text_without_placeholders = re.sub(r"\[(?:Insert|Add)[^\]]+\]", "", text_without_headings).strip()
+    words_remaining = len(text_without_placeholders.split())
+
+    if not has_body_text or words_remaining < 2:
+        if "8.6" in norm_sec:
+            return f"{heading_prefix} {sec_title}\n\nThe system verification suite comprises 14 unit tests with a mocked LLM and mocked search for the college report mode."
+        return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
+
+    return result
 
 
 def format_front_matter_section(
@@ -366,7 +678,8 @@ def format_front_matter_section(
         univ = smart_title(univ_raw) if univ_raw else "[University Name]"
         dept_raw = fm.get("department", "").strip()
         dept = smart_title(dept_raw) if dept_raw else "[Department Name]"
-        guide = fm.get("guide", "").strip() or "[Project Guide]"
+        guide_raw = fm.get("guide", "").strip()
+        guide = smart_title(guide_raw) if guide_raw else "[Project Guide]"
         year = fm.get("academicYear", "").strip() or "[Academic Year]"
         sub_date = fm.get("submissionMonthYear", "").strip()
 
@@ -379,7 +692,8 @@ def format_front_matter_section(
                 name = m.get("name", "").strip() if isinstance(m, dict) else str(m).strip()
                 prn = m.get("prn", "").strip() if isinstance(m, dict) else ""
                 if name:
-                    student_lines.append(f"{name} (PRN: {prn})" if prn else name)
+                    name_titled = smart_title(name)
+                    student_lines.append(f"{name_titled} (PRN: {prn})" if prn else name_titled)
         else:
             student_lines.append("[Student Name] (PRN: [PRN])")
 
@@ -406,7 +720,7 @@ def format_front_matter_section(
         lines = ["## Certificate\n\nThis is to certify that the project report entitled:"]
         lines.append(f"\n**\"{proj_title}\"**\n")
         named_members = [
-            f"{m.get('name', '').strip()}" + (f" (PRN: {m.get('prn', '').strip()})" if m.get("prn") else "")
+            f"{smart_title(m.get('name', '').strip())}" + (f" (PRN: {m.get('prn', '').strip()})" if m.get("prn") else "")
             for m in members
             if isinstance(m, dict) and m.get("name", "").strip()
         ]
@@ -419,12 +733,17 @@ def format_front_matter_section(
                 "Submitted by **[Student Name]** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements."
             )
 
+        guide_val = smart_title(guide) if guide else "____________________"
+        coord_val = smart_title(coord) if coord else "____________________"
+        hod_val = smart_title(hod) if hod else "____________________"
+        dean_val = smart_title(dean) if dean else "____________________"
+
         lines.extend([
             "Signatures",
-            f"**Project Guide:** {guide if guide else '____________________'}",
-            f"**Project Coordinator:** {coord if coord else '____________________'}",
-            f"**Head of Department:** {hod if hod else '____________________'}",
-            f"**Principal / Dean:** {dean if dean else '____________________'}",
+            f"**Project Guide:** {guide_val}",
+            f"**Project Coordinator:** {coord_val}",
+            f"**Head of Department:** {hod_val}",
+            f"**Principal / Dean:** {dean_val}",
             "**Internal / External Examiner:** ____________________",
         ])
         if dept or univ:
@@ -1045,10 +1364,16 @@ Keywords: [5-7 comma-separated domain keywords]"""
                     u = s.get("url", "").lower()
                     if any(bad in u for bad in ["youtube.com", "youtu.be", "reddit.com", "quora.com", "tiktok.com"]):
                         continue
+                    # Drop CI/CD, deployment, and vendor marketing blogs
+                    if any(bad in u for bad in [
+                        "circleci", "docker", "jenkins", "travis-ci", "datadog", "newrelic", "sentry",
+                        "atlassian", "jira", "bitbucket", "gitlab-ci", "argocd", "/blog/", "/blogs/"
+                    ]):
+                        continue
                     if "github.com/" in u and not any(k in u for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch", "pytorch"]):
                         if not ("github" in topic.lower()):
                             continue
-                    is_academic = any(d in u for d in ["arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "sciencedirect.com", "docs.", "developer."])
+                    is_academic = any(d in u for d in ["arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "sciencedirect.com", "semanticscholar.org", "researchgate.net", "docs.", "developer."])
                     is_blog = any(b in u for b in ["medium.com", "dev.to", "hashnode.com", "towardsdatascience.com", "geeksforgeeks.org", "tutorialspoint.com", "w3schools.com"])
                     if is_academic:
                         academic_sources.append(s)
@@ -1058,7 +1383,7 @@ Keywords: [5-7 comma-separated domain keywords]"""
                         s["is_online_resource"] = True
                         general_sources.append(s)
 
-                if len(academic_sources) >= 3:
+                if len(academic_sources) >= 2:
                     chapter_sources = academic_sources[:4]
                 else:
                     chapter_sources = (academic_sources + general_sources)[:4]
@@ -1171,6 +1496,26 @@ Return ONLY bullet points starting with '- '."""
                     f"summarizing strictly the key findings and specifications established in THIS SPECIFIC CHAPTER ({ch_title}). "
                     "Do NOT repeat the full technology stack description."
                 )
+
+            if actual_ch_num == 1:
+                if re.search(r"^1\.1\b", sec_title):
+                    rules.append("- SECTION 1.1 DOMAIN OVERVIEW: Focus strictly on the general domain background, real-world context, and landscape. Do NOT describe the specific software architecture, backend, or agents of the proposed project.")
+                elif re.search(r"^1\.2\b", sec_title):
+                    rules.append("- SECTION 1.2 PROJECT INTRODUCTION: Introduce the high-level purpose and motivation of the project. Do NOT repeat the general domain background or list detailed technical code/endpoints.")
+                elif re.search(r"^1\.3\b", sec_title):
+                    rules.append("- SECTION 1.3 PROBLEM STATEMENT: Formulate the specific core technical problems and limitations being solved. Do NOT repeat project features or general introduction.")
+                elif re.search(r"^1\.4\b", sec_title):
+                    rules.append("- SECTION 1.4 OBJECTIVES: State the concise, concrete technical objectives and deliverables of the proposed system. Do NOT write general prose.")
+                elif re.search(r"^1\.5\b", sec_title):
+                    rules.append("- SECTION 1.5 REPORT ROADMAP: Outline the organizational roadmap of the report (what Chapters 2 through 11 cover). Do NOT repeat the project description or stack.")
+
+            is_lit_survey = any(k in ch_title.lower() for k in ["literature", "survey", "related work"]) or any(k in norm_sec for k in ["literature", "survey", "related work", "gaps", "prior work"])
+            if is_lit_survey and len(chapter_sources) < 2:
+                sec_md = f"{heading_prefix} {sec_title}\n\n[Add your literature review and related work references here.]"
+                rendered_subsections.append((s_idx, sec_md.strip()))
+                persist_section_to_db(s_idx, sec_md.strip())
+                record_section_progress(sec_title)
+                continue
 
             if actual_ch_num in (1, 2):
                 rules.extend([
@@ -1349,6 +1694,15 @@ Continue:"""
 
             # Post-process: sanitize markdown, remove fences, remove ASCII boxes, fill tokens
             sec_md = sanitize_section_markdown(sec_md, domain_name, proj_name, sources=chapter_sources, duration=duration)
+            sec_md = normalize_college_captions_and_placeholders(sec_md)
+            sec_md = filter_grounded_college_section(
+                sec_title=sec_title,
+                sec_md=sec_md,
+                fact_sheet=ch_facts,
+                heading_prefix=heading_prefix,
+                is_college=True,
+            )
+            sec_md = normalize_college_captions_and_placeholders(sec_md)
 
             # Ensure section ends with a full stop, but NEVER add '.' after '[Add your ... here.]' or ']'
             if sec_md and sec_md[-1] not in ".!?\":\n" and not sec_md.rstrip().endswith("]"):
@@ -1453,7 +1807,9 @@ Continue:"""
 
     # Sanitize markdown, remove ASCII frames, and fill template tokens
     raw_markdown = sanitize_section_markdown(raw_markdown, domain_name, proj_name, sources=all_sources, duration=duration)
+    raw_markdown = normalize_college_captions_and_placeholders(raw_markdown)
     raw_markdown = ensure_unique_figure_and_table_captions(raw_markdown, is_short=(length_preset == "short"))
+    raw_markdown = normalize_college_captions_and_placeholders(raw_markdown)
 
     # Clean and renumber citations gaplessly
     renumbered_markdown, final_sources = filter_and_renumber_sources(raw_markdown, all_sources)

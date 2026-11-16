@@ -22,8 +22,10 @@ from app.agents.section_engine import (
     build_compact_project_fact_sheet,
     ensure_unique_figure_and_table_captions,
     extract_domain_and_project,
+    filter_grounded_college_section,
     format_front_matter_section,
     is_canned_boilerplate,
+    normalize_college_captions_and_placeholders,
     sanitize_section_markdown,
 )
 from app.export import markdown_to_docx, markdown_to_pdf
@@ -1159,6 +1161,161 @@ Numbered deployment steps:
         self.assertIn("Appendix A: Certificates of Publication", toc_text, f"Appendix A missing from TOC:\n{toc_text}")
         self.assertIn("Appendix B: Glossary", toc_text)
         self.assertIn("Chapter 1 Introduction", toc_text)
+
+
+    def test_caption_and_placeholder_normalizer(self):
+        """Verify caption and placeholder normalization rules."""
+        # 1. Nested diagram collapse
+        nested_md = "[Insert diagram here: [Insert diagram here: System Architecture]]\n\nFig. 7.1: System Architecture"
+        norm_nested = normalize_college_captions_and_placeholders(nested_md)
+        self.assertIn("[Insert diagram here: System Architecture]", norm_nested)
+        self.assertNotIn("[Insert diagram here: [Insert diagram here:", norm_nested)
+
+        # 2. Always close bracket / bare bracket
+        bare_md = "[Insert diagram here:\n\nProse text."
+        norm_bare = normalize_college_captions_and_placeholders(bare_md)
+        self.assertIn("[Insert diagram here]", norm_bare)
+        self.assertNotIn("[Insert diagram here:\n", norm_bare)
+
+        unclosed_md = "[Insert diagram here: Data Flow Pipeline\n\nProse text."
+        norm_unclosed = normalize_college_captions_and_placeholders(unclosed_md)
+        self.assertIn("[Insert diagram here: Data Flow Pipeline]", norm_unclosed)
+
+        # 3. Strip stray ']' and '[' at end of captions
+        caption_stray_md = "Fig. 7.1: Architecture Diagram]\n\nTable 7.1: Entity Matrix["
+        norm_captions = normalize_college_captions_and_placeholders(caption_stray_md)
+        self.assertIn("Fig. 7.1: Architecture Diagram", norm_captions)
+        self.assertNotIn("Architecture Diagram]", norm_captions)
+        self.assertIn("Table 7.1: Entity Matrix", norm_captions)
+        self.assertNotIn("Entity Matrix[", norm_captions)
+
+        # 4. Never let caption title lose first letter (test 'Non-functional requirements overview')
+        test_caption_input = "# Chapter 3 SRS\n\nFig. 3.1: Non-functional requirements overview"
+        unique_out = ensure_unique_figure_and_table_captions(test_caption_input)
+        self.assertIn("Non-functional requirements overview", unique_out)
+        self.assertNotIn("Fig. 3.1: on-functional", unique_out)
+        self.assertNotIn(" - on-functional", unique_out)
+
+        # 5. Remove inline 'see [Insert diagram here: Fig. 7.2 - ...]' in prose
+        prose_md = "The data flow is illustrated below (see [Insert diagram here: Fig. 7.2 - Database Schema])."
+        norm_prose = normalize_college_captions_and_placeholders(prose_md)
+        self.assertIn("see Fig. 7.2", norm_prose)
+        self.assertNotIn("[Insert diagram here: Fig. 7.2", norm_prose)
+
+        # 6. Drop captions with empty or junk title ('for the ER diagram.')
+        junk_md = "[Insert diagram here: Fig. 7.1 - for the ER diagram.]\n\nFig. 7.1: for the ER diagram.\n\nValid text."
+        norm_junk = normalize_college_captions_and_placeholders(junk_md)
+        self.assertNotIn("for the ER diagram", norm_junk)
+        self.assertIn("Valid text.", norm_junk)
+
+        # 7. Placeholder never inserted mid-word or mid-sentence
+        mid_word_md = "The platform delivers per-run L[Add your latency metrics here.] across requests."
+        norm_mid_word = normalize_college_captions_and_placeholders(mid_word_md)
+        self.assertNotIn("L[Add", norm_mid_word)
+        self.assertNotIn("per-run L", norm_mid_word)
+        self.assertIn("[Add your latency metrics here.]", norm_mid_word)
+
+        # 8. Remove meta-text sentences
+        meta_md = "This module is presented as a placeholder pending detailed analysis. We also maintain placeholder sections for additional validation."
+        norm_meta = normalize_college_captions_and_placeholders(meta_md)
+        self.assertNotIn("presented as a placeholder pending detailed analysis", norm_meta)
+        self.assertNotIn("placeholder sections for additional validation", norm_meta)
+
+        # 9. Placeholder bullets must not be bold
+        bold_bullet_md = "- **[Add your system architecture here.]**\n* **[Add your database schema here.]**"
+        norm_bullet = normalize_college_captions_and_placeholders(bold_bullet_md)
+        self.assertIn("- [Add your system architecture here.]", norm_bullet)
+        self.assertIn("* [Add your database schema here.]", norm_bullet)
+        self.assertNotIn("**[Add your", norm_bullet)
+
+    def test_grounding_filter_and_repetition(self):
+        """Verify post-generation grounding filter and repetition checks."""
+        facts = "Project Name: CiteBolt\nCore Domain: AI Research\nDatabase Schema: users(id), runs(id)\nMain API Endpoints: GET /api/runs"
+
+        # 1. Unsupported numbers / units / metrics removed
+        ungrounded_text = "The platform achieves 99.8% precision with sub-second latency under 150ms on 8 cores and 16GB RAM. It provides robust capabilities."
+        filtered_metrics = filter_grounded_college_section("7.1 Implementation", ungrounded_text, facts)
+        self.assertNotIn("99.8%", filtered_metrics)
+        self.assertNotIn("sub-second", filtered_metrics)
+        self.assertNotIn("150ms", filtered_metrics)
+        self.assertNotIn("16GB", filtered_metrics)
+        self.assertIn("robust capabilities", filtered_metrics)
+
+        # 2. Unsupported tools removed
+        ungrounded_tools = "Frontend tests use Jest and React Testing Library while backend calls httpx in CircleCI and Docker with Jira tracking. The architecture is modular."
+        filtered_tools = filter_grounded_college_section("8.1 Testing", ungrounded_tools, facts)
+        self.assertNotIn("Jest", filtered_tools)
+        self.assertNotIn("React Testing Library", filtered_tools)
+        self.assertNotIn("CircleCI", filtered_tools)
+        self.assertNotIn("Docker", filtered_tools)
+        self.assertNotIn("Jira", filtered_tools)
+        self.assertIn("The architecture is modular", filtered_tools)
+
+        # 3. Forbidden words removed
+        forbidden_text = "The data is stored in encrypted SQLite over HTTPS following CRUD sprints with GDPR compliance. We enforce token-budget scheduler."
+        filtered_words = filter_grounded_college_section("7.2 Storage", forbidden_text, facts)
+        self.assertNotIn("encrypted SQLite", filtered_words)
+        self.assertNotIn("HTTPS", filtered_words)
+        self.assertNotIn("CRUD", filtered_words)
+        self.assertNotIn("sprints", filtered_words)
+        self.assertNotIn("GDPR", filtered_words)
+        self.assertNotIn("token-budget scheduler", filtered_words)
+
+        # 4. Section 8.6 lists strictly 14 unit tests
+        filtered_86 = filter_grounded_college_section("8.6 Master Test Suite", "Integration testing was executed with Jest and Cypress.", facts)
+        self.assertIn("14 unit tests", filtered_86)
+        self.assertNotIn("Jest", filtered_86)
+
+        # 5. Section 8.7 & 10.5/10.6 no invented process -> placeholder
+        filtered_87 = filter_grounded_college_section("8.7 Maintenance and Monitoring", "We maintain continuous automated bug tracking and database integrity monitoring.", facts)
+        self.assertIn("[Add your Maintenance and Monitoring here.]", filtered_87)
+        self.assertNotIn("database integrity monitoring", filtered_87)
+
+        # 6. Section 9.6 comparison placeholder
+        filtered_96 = filter_grounded_college_section("9.6 Comparison with Existing Systems", "The platform outperforms commercial search tools in accuracy and throughput.", facts)
+        self.assertIn("[Add your comparison with existing systems here.]", filtered_96)
+
+        # 7. Section 7.4/7.5 agents as LangGraph nodes (not route handlers)
+        agent_text = "The research agents are implemented as FastAPI route handlers for query processing."
+        filtered_agents = filter_grounded_college_section("7.4 Agent Pipeline", agent_text, facts)
+        self.assertIn("LangGraph", filtered_agents)
+        self.assertNotIn("FastAPI route handlers", filtered_agents)
+
+        # 8. Repetition: run command removed from 1.1-1.5 and 5.1
+        rep_11 = "Launch using uvicorn app.main:app --reload and npm run dev. This chapter introduces the system."
+        filtered_rep = filter_grounded_college_section("1.1 Overview of the Domain", rep_11, facts)
+        self.assertNotIn("uvicorn", filtered_rep)
+        self.assertNotIn("npm run dev", filtered_rep)
+        self.assertIn("This chapter introduces the system.", filtered_rep)
+
+    def test_chapter_2_sources_and_title_page(self):
+        """Verify Chapter 2 fallback, title page title-casing and bracket placeholders."""
+        # 1. Front matter title page name title-casing
+        fm = {
+            "projectTitle": "research engine",
+            "teamMembers": [{"name": "john doe", "prn": "123"}, {"name": "alice smith", "prn": "456"}],
+            "guide": "dr. jane doe",
+            "degree": "",
+            "department": "",
+            "university": "",
+        }
+        tp = format_front_matter_section("Title Page", "research engine", fm)
+        self.assertIn("John Doe (PRN: 123)", tp)
+        self.assertIn("Alice Smith (PRN: 456)", tp)
+        self.assertIn("Dr. Jane Doe", tp)
+        self.assertIn("[Degree]", tp)
+        self.assertIn("[Department Name]", tp)
+        self.assertIn("[University Name]", tp)
+
+        cert = format_front_matter_section("Certificate", "research engine", fm)
+        self.assertIn("John Doe", cert)
+        self.assertIn("Alice Smith", cert)
+        self.assertIn("Dr. Jane Doe", cert)
+
+        # 2. PDF references left alignment and URL wrap check
+        pdf_md = "# Title\n\n## References\n\n[1] Reference Paper, Available: https://arxiv.org/abs/2103.12345678901234567890."
+        pdf_bytes = markdown_to_pdf(pdf_md, title="Test", report_type="college")
+        self.assertTrue(len(pdf_bytes) > 1000)
 
 
 if __name__ == "__main__":
