@@ -59,12 +59,31 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     
     This is the ONLY allowed technical truth for Chapters 3-10.
     """
+    fm = front_matter or {}
     domain_name, proj_name = extract_domain_and_project(topic, front_matter)
     ctx = context.strip() if context else ""
     lines = [
         f"Project Name: {proj_name}",
         f"Core Domain: {domain_name}",
     ]
+    degree = fm.get("degree", "").strip()
+    if degree:
+        lines.append(f"Degree: {degree}")
+    team_size = fm.get("teamSize", "").strip()
+    if team_size:
+        lines.append(f"Team Size: {team_size}")
+    duration = fm.get("duration", "").strip()
+    if duration:
+        lines.append(f"Project Duration: {duration}")
+    deploy_status = fm.get("deploymentStatus", "").strip() or "Planned / Local environment"
+    lines.append(f"Deployment Status: {deploy_status}")
+    db_tables = fm.get("databaseTables", "").strip()
+    if db_tables:
+        lines.append(f"Database Tables: {db_tables}")
+    endpoints = fm.get("mainEndpoints", "").strip()
+    if endpoints:
+        lines.append(f"Main API Endpoints: {endpoints}")
+
     if ctx:
         lines.append("Verified Architecture & Project Facts (Ground Truth):")
         # Keep up to 2500 chars (~350 words / ~400 tokens) to capture entire stack
@@ -72,10 +91,13 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     else:
         lines.append("Verified Architecture: System specification as outlined in project topic.")
     lines.extend([
-        "Strict Rule: Ground Truth for Chapters 3-10:",
-        "1. Only describe components, tools, agents, endpoints, and libraries explicitly present in the facts above.",
-        "2. If any technical detail, component, or configuration is not provided, write '[Add your ...]'. Never invent outside agents or tools.",
-        "3. In Chapters 8 and 9 (testing and results), NEVER invent fake benchmark numbers, latency statistics, test execution times, or accuracy figures; explicitly write '[Add your result here]'.",
+        "Strict Rule: Ground Truth Rules for ALL Chapters:",
+        "1. Describe the user's project ONLY from the Project Facts above. Web research snippets are strictly generic domain background/related literature and must NEVER be attributed to the user's project.",
+        "2. A technology, tool, library, or framework may be named as part of the user's project ONLY if it explicitly appears in the Project Facts above. NEVER invent outside agents (e.g. planner/reviewer), external search tools (Serper, Bedrock, DuckDuckGo), Docker, CircleCI, CI/CD, cron jobs, backups, or Python versions.",
+        "3. Anything not in the Project Facts must be written generically or as '[Add your <thing> here]'. Specifically: DB table/column names, API endpoints, timelines/weeks, team roles/size, effort estimates, survey/feedback results, load tests, deployment challenges, bug tracker.",
+        "4. If deployment status is not stated as in production, write Chapter 10 as planned/local deployment.",
+        "5. NEVER invent survey numbers, user-feedback ratings, accuracy percentages, latency figures, or test execution times. Use '[Add your result here]'.",
+        "6. Citations [n] are strictly for generic literature and domain claims in Chapters 1-2; NEVER cite literature for statements about the user's own architecture or implementation.",
     ])
     return "\n".join(lines)
 
@@ -100,22 +122,24 @@ def sanitize_section_markdown(
     md = re.sub(r"^```(?:markdown)?\s*\n", "", md, flags=re.MULTILINE)
     md = re.sub(r"\n```\s*$", "", md, flags=re.MULTILINE)
 
-    # 3. Convert #### or ##### to ###
+    # 3. Convert #### or ##### to ###, and demote single-hash subsections (# 1.1) to ## 1.1
     md = re.sub(r"^#{4,}\s+(.*)", r"### \1", md, flags=re.MULTILINE)
+    md = re.sub(r"^#\s+(\d+\.\d+.*)", r"## \1", md, flags=re.MULTILINE)
 
     # 4. Strip excessive ** markers (e.g. **** or empty bold)
     md = re.sub(r"\*{4,}", "", md)
     md = re.sub(r"\*\*\s*\*\*", "", md)
 
-    # 5. Clean ASCII art frames around [Insert diagram here]
+    # 5. Clean ASCII art frames around [Insert diagram here] and strip stray > blockquotes
     md = re.sub(
         r"\+[-=+]+\+\s*\n\s*\|\s*(\[[^\]]*diagram[^\]]*\])\s*\|\s*\n\s*\+[-=+]+\+",
-        r"> \1",
+        r"\1",
         md,
         flags=re.IGNORECASE,
     )
     md = re.sub(r"\+[-=]{5,}\+\s*\n", "", md)
     md = re.sub(r"\|\s*(\[[^\]]*diagram[^\]]*\])\s*\|", r"\1", md, flags=re.IGNORECASE)
+    md = re.sub(r"^\s*>\s*(\[[^\]]*diagram[^\]]*\])", r"\1", md, flags=re.MULTILINE | re.IGNORECASE)
 
     # 6. Clean author-year citations like (Smith, 2024) or (Vaswani et al., 2017)
     # Map to [n] when matching a fetched source; never remove other bracketed/parenthetical text.
@@ -159,6 +183,62 @@ def is_canned_boilerplate(text: str, target_words: int) -> bool:
     return False
 
 
+def ensure_unique_figure_and_table_captions(md: str) -> str:
+    """Ensure every diagram placeholder and table has a unique, sequential Fig. N.M or Table N.M caption."""
+    lines = md.split("\n")
+    out_lines: list[str] = []
+    current_ch = 1
+    fig_idx = 1
+    tbl_idx = 1
+
+    for line in lines:
+        stripped = line.strip()
+        ch_m = re.match(r"^#\s*Chapter\s+(\d+)", stripped, re.IGNORECASE)
+        if ch_m:
+            current_ch = int(ch_m.group(1))
+            fig_idx = 1
+            tbl_idx = 1
+            out_lines.append(line)
+            continue
+
+        diag_m = re.match(r"^>?\s*\[Insert diagram here(?::\s*([^\]]+))?\]", stripped, re.IGNORECASE)
+        if diag_m:
+            raw_desc = (diag_m.group(1) or "").strip()
+            clean_desc = re.sub(r"^(?:Fig\.|Figure)\s*\d+(?:\.\d+)?[:\s\-]*", "", raw_desc, flags=re.IGNORECASE).strip()
+            clean_desc = clean_desc.lstrip("-: ").strip()
+            if not clean_desc:
+                clean_desc = "Architecture and Execution Workflow Diagram"
+
+            diag_label = f"Fig. {current_ch}.{fig_idx}"
+            fig_idx += 1
+            out_lines.append(f"[Insert diagram here: {diag_label} - {clean_desc}]")
+            out_lines.append("")
+            out_lines.append(f"{diag_label}: {clean_desc}")
+            continue
+
+        fig_cap_m = re.match(r"^(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+(.*)", stripped, re.IGNORECASE)
+        if fig_cap_m and not stripped.lower().startswith(("as shown", "refer to", "in fig", "see fig")):
+            if out_lines and out_lines[-1].startswith("Fig. "):
+                continue
+            desc = fig_cap_m.group(2).strip()
+            diag_label = f"Fig. {current_ch}.{fig_idx}"
+            fig_idx += 1
+            out_lines.append(f"{diag_label}: {desc}")
+            continue
+
+        tbl_cap_m = re.match(r"^Table\s+(\d+\.\d+)[:\s\-]+(.*)", stripped, re.IGNORECASE)
+        if tbl_cap_m:
+            desc = tbl_cap_m.group(2).strip()
+            tbl_label = f"Table {current_ch}.{tbl_idx}"
+            tbl_idx += 1
+            out_lines.append(f"{tbl_label}: {desc}")
+            continue
+
+        out_lines.append(line)
+
+    return "\n".join(out_lines)
+
+
 def format_front_matter_section(
     sec_title: str,
     topic: str,
@@ -179,39 +259,50 @@ def format_front_matter_section(
     members = fm.get("teamMembers") or []
 
     if "title page" in norm:
-        lines = [
-            f"# {proj_title}\n",
-            "**A PROJECT REPORT**\n",
-            "Submitted in partial fulfillment of the academic requirements for the award of the degree of\n",
-            "**BACHELOR OF TECHNOLOGY / ENGINEERING**\n",
-        ]
+        degree = fm.get("degree", "").strip() or "[Degree]"
+        univ_raw = fm.get("university", "").strip()
+        univ = univ_raw.title() if univ_raw else "[University Name]"
+        dept_raw = fm.get("department", "").strip()
+        dept = dept_raw.title() if dept_raw else "[Department Name]"
+        guide = fm.get("guide", "").strip() or "[Project Guide]"
+        year = fm.get("academicYear", "").strip() or "[Academic Year]"
+        sub_date = fm.get("submissionMonthYear", "").strip()
+
         has_named_members = any(
             isinstance(m, dict) and m.get("name", "").strip() for m in members
         )
+        student_lines = []
         if has_named_members:
-            lines.append("Submitted by:\n")
             for m in members:
                 name = m.get("name", "").strip() if isinstance(m, dict) else str(m).strip()
                 prn = m.get("prn", "").strip() if isinstance(m, dict) else ""
                 if name:
-                    lines.append(f"**{name}** (PRN: {prn})" if prn else f"**{name}**")
-            lines.append("")
+                    student_lines.append(f"{name} (PRN: {prn})" if prn else name)
         else:
-            lines.append("Submitted by:\n**____________________** (PRN: ____________________)\n")
+            student_lines.append("[Student Name] (PRN: [PRN])")
 
-        if guide:
-            lines.append(f"Under the guidance of:\n**{guide}**\n")
-        else:
-            lines.append("Under the guidance of:\n**____________________**\n")
+        year_str = year if year.lower().startswith("academic year") else f"Academic Year: {year}"
 
-        org_lines = [line for line in [dept, univ, f"Academic Year: {year}" if year else "", sub_date] if line]
-        if org_lines:
-            lines.append("\n".join(org_lines))
-        return "\n".join(lines).strip()
+        lines = [
+            f"# {proj_title}",
+            "A PROJECT REPORT",
+            "Submitted in partial fulfillment of the requirements for the award of the degree of",
+            f"**{degree}**",
+            "Submitted by",
+            *student_lines,
+            "Under the guidance of",
+            guide,
+            dept,
+            univ,
+            year_str,
+        ]
+        if sub_date:
+            lines.append(sub_date)
+        return "\n\n".join(lines).strip()
 
     if "certificate" in norm and not any(k in norm for k in ["publication", "appendix"]):
         lines = ["## Certificate\n\nThis is to certify that the project report entitled:"]
-        lines.append(f"\n### \"{proj_title}\"\n")
+        lines.append(f"\n**\"{proj_title}\"**\n")
         named_members = [
             f"{m.get('name', '').strip()}" + (f" (PRN: {m.get('prn', '').strip()})" if m.get("prn") else "")
             for m in members
@@ -223,10 +314,10 @@ def format_front_matter_section(
             )
         else:
             lines.append(
-                "Submitted by **____________________** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements.\n"
+                "Submitted by **[Student Name]** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements.\n"
             )
 
-        lines.append("### Signatures\n")
+        lines.append("\n**Signatures**\n")
         lines.append(f"**Project Guide:** {guide if guide else '____________________'}\n")
         lines.append(f"**Project Coordinator:** {coord if coord else '____________________'}\n")
         lines.append(f"**Head of Department:** {hod if hod else '____________________'}\n")
@@ -635,7 +726,11 @@ def run_section_pipeline(
     # Sanitize outline section titles to replace [Domain] and [Project]
     for s in sections:
         t = str(s.get("title", ""))
-        if "[Domain]" in t or "[Project]" in t:
+        if re.search(r"^1\.1\b", t):
+            s["title"] = "1.1 Overview of the Domain"
+        elif re.search(r"^1\.2\b", t):
+            s["title"] = f"1.2 Introduction to {proj_name}"
+        elif "[Domain]" in t or "[Project]" in t:
             s["title"] = t.replace("[Domain]", domain_name).replace("[Project]", proj_name)
 
     tavily_call_count = [0]
@@ -735,6 +830,7 @@ Strict Requirements:
 - Target word count: approximately 250 words.
 - Format: A single cohesive, professional plain-text narrative paragraph (NO bullet points, NO citations like [n], NO tables).
 - Summarize the motivation, problem statement, proposed system architecture, implementation highlights, and results.
+- CRITICAL: Never write '[Add your result here]' or any placeholder. State outcomes qualitatively as successful engineering implementation meeting system requirements.
 - End strictly with a final line: "Keywords: keyword1, keyword2, keyword3, keyword4, keyword5"
 
 Project Facts (Ground Truth):
@@ -778,6 +874,8 @@ Keywords: [5-7 comma-separated domain keywords]"""
 
             # Clean and sanitize abstract
             fm_text = sanitize_section_markdown(abs_body, domain_name, proj_name)
+            # Guarantee abstract never contains [Add your ...] placeholder
+            fm_text = re.sub(r"\[Add your[^\]]*\]", "meeting all performance and functional criteria", fm_text, flags=re.IGNORECASE)
             if not fm_text.strip().startswith("#"):
                 fm_text = f"## Abstract\n\n{fm_text.strip()}"
             if "Keywords:" not in fm_text:
@@ -859,7 +957,7 @@ Sources available:
 Extract 4-5 concise domain background facts.
 Return ONLY bullet points starting with '- '."""
             try:
-                ch_facts, usage = robust_generate_text(
+                domain_facts, usage = robust_generate_text(
                     analysis_prompt,
                     is_easy=False,
                     temperature=0.15,
@@ -870,7 +968,13 @@ Return ONLY bullet points starting with '- '."""
             except DailyTokenLimitError as dt_err:
                 raise dt_err
             except Exception:
-                ch_facts = f"- Domain foundations and background context of {topic}."
+                domain_facts = f"- Domain foundations and background context of {topic}."
+
+            ch_facts = (
+                f"{project_fact_sheet}\n\n"
+                f"Generic Domain Background & Literature Survey (Reference only; NOT part of user's project):\n"
+                f"{domain_facts}"
+            )
         else:
             # Chapters 3-10: GROUND TRUTH ONLY. Zero web searches, zero external project facts.
             chapter_sources = []
@@ -914,26 +1018,56 @@ Return ONLY bullet points starting with '- '."""
                 f"- Start directly with the section heading: '{heading_prefix} {sec_title}'. Do NOT output a document title or preamble.",
                 "- Write thoroughly and in depth to reach approximately the target word count.",
                 "- Write in clean, professional plain ASCII text (straight quotes, normal hyphens).",
-                f"- Numbering: format figure captions strictly as 'Fig. {actual_ch_num}.N: [Description]' and table captions as 'Table {actual_ch_num}.N: [Description]'. Refer to them as 'Fig. {actual_ch_num}.N' and 'Table {actual_ch_num}.N' in text.",
-                f"- Diagrams: Where a diagram is needed (architecture, ERD, sequence, flowchart, Gantt), insert a clean placeholder without ASCII boxes or backtick fences: '> [Insert diagram here: Fig. {actual_ch_num}.N - Description]'.",
-                "- Citations: Do NOT invent author-year citations like (Smith, 2024). Use numeric IEEE citations like [1], [2] where referencing domain concepts, or plain technical description.",
+                f"- Numbering: format figure captions strictly on their own line as 'Fig. {actual_ch_num}.N: [Description]' and table captions as 'Table {actual_ch_num}.N: [Description]'. Refer to them as 'Fig. {actual_ch_num}.N' and 'Table {actual_ch_num}.N' in text.",
+                f"- Diagrams: Where a diagram is needed (architecture, ERD, sequence, flowchart, Gantt), insert a clean placeholder on its own line: '[Insert diagram here: Fig. {actual_ch_num}.N - Description]'. Do NOT use '>' or ASCII boxes.",
                 "- Do NOT generate a Sources or References section; that will be compiled at the end.",
             ]
 
-            if actual_ch_num >= 3:
+            is_intro_section = (
+                re.search(r"^\d+\.1\s+introduction", norm_sec)
+                or (norm_sec == "introduction" and sec_lvl >= 2)
+            )
+            is_summary_section = (
+                "summary" in norm_sec
+                and not any(k in norm_sec for k in ["introduction", "conclusion", "motivation", "abstract"])
+            )
+            if is_intro_section:
                 rules.append(
-                    "- GROUND TRUTH CONSTRAINT (CRITICAL):\n"
-                    "  * The Project Facts below are the ONLY allowed source for how the system works.\n"
-                    "  * NEVER name agents, tools, libraries, versions, servers, CI/CD, backups, endpoints or test IDs that are not in the project facts.\n"
-                    "  * If any specific detail, metric, test case, or configuration is not provided, explicitly write '[Add your ...]'. Never invent fake benchmarks or test figures."
+                    f"- CHAPTER INTRODUCTION (CRITICAL): Provide a concise 2-3 sentence overview (~60-100 words) "
+                    f"explaining strictly what THIS SPECIFIC CHAPTER ({ch_title}) covers. "
+                    "Do NOT repeat the overall project stack or architecture."
+                )
+            elif is_summary_section:
+                rules.append(
+                    f"- CHAPTER SUMMARY (CRITICAL): Provide a concise 2-3 sentence synthesis (~60-100 words) "
+                    f"summarizing strictly the key findings and specifications established in THIS SPECIFIC CHAPTER ({ch_title}). "
+                    "Do NOT repeat the full technology stack description."
                 )
 
+            if actual_ch_num in (1, 2):
+                rules.extend([
+                    "- CHAPTER 1-2 GROUND TRUTH & CITATION RULES (CRITICAL):",
+                    f"  * Describe the user's project ({proj_name}) strictly from the Project Facts.",
+                    "  * Web research snippets are for generic background and related work only (Chapter 2); NEVER attribute them to the user's project.",
+                    "  * NEVER name external search tools or other systems (Serper, Bedrock, DuckDuckGo, Docker, CircleCI, etc.) as part of the user's project.",
+                    "  * Citations like [n] are permitted ONLY for generic literature claims in Chapters 1-2, never for statements about the user's own architecture.",
+                ])
+            else:
+                rules.extend([
+                    "- GROUND TRUTH CONSTRAINT (CRITICAL):",
+                    "  * The Project Facts above are the ONLY allowed source for how the user's system works.",
+                    "  * NEVER name agents, tools, libraries, versions, servers, CI/CD, backups, endpoints, DB columns, or test IDs that are not in the Project Facts.",
+                    "  * If any specific detail, metric, test case, or configuration is not provided, explicitly write '[Add your <thing> here]'.",
+                    "  * If deployment status is not stated as in production, write Chapter 10 as planned/local deployment.",
+                    "  * Do NOT use citations like [n] in Chapters 3-10.",
+                ])
+
             if actual_ch_num in (8, 9):
-                rules.append(
-                    "- EXPERIMENTAL MEASUREMENTS & BENCHMARK RESULTS (CRITICAL):\n"
-                    "  * Do NOT invent fake benchmark numbers, test run counts, execution times, latency stats, or accuracy percentages.\n"
-                    "  * For any measurement, test statistic, or benchmark figure not explicitly given in the facts, write '[Add your result here]'."
-                )
+                rules.extend([
+                    "- EXPERIMENTAL MEASUREMENTS & BENCHMARK RESULTS (CRITICAL):",
+                    "  * NEVER invent fake survey numbers, user-feedback ratings, accuracy percentages, latency figures, or test execution times.",
+                    "  * For any measurement, test statistic, or benchmark figure not explicitly given in the facts, write '[Add your result here]'.",
+                ])
 
             writer_prompt = f"""You are an elite academic and technical writer. Write ONE section of a detailed college engineering report.
 Overall Project: {proj_name}
@@ -1146,6 +1280,7 @@ Continue:"""
 
     # Sanitize markdown, remove ASCII frames, and fill template tokens
     raw_markdown = sanitize_section_markdown(raw_markdown, domain_name, proj_name, sources=all_sources)
+    raw_markdown = ensure_unique_figure_and_table_captions(raw_markdown)
 
     # Clean and renumber citations gaplessly
     renumbered_markdown, final_sources = filter_and_renumber_sources(raw_markdown, all_sources)
@@ -1172,61 +1307,17 @@ Continue:"""
     filtered_sources.sort(key=_source_priority)
     final_sources = filtered_sources
 
-    # Replace List of Figures based on actual captions present in markdown
-    figs = re.findall(r"(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+([^\]\n\r]+)", renumbered_markdown, re.IGNORECASE)
-    if figs:
-        seen_f: set[str] = set()
-        fig_rows = []
-        for f_num, f_cap in figs:
-            if f_num not in seen_f:
-                seen_f.add(f_num)
-                fig_rows.append(f"| Fig. {f_num} | {f_cap.strip()} |")
-        lof_block = "## List of Figures\n\n| Figure No. | Figure Caption |\n| :--- | :--- |\n" + "\n".join(fig_rows)
-    else:
-        lof_block = "## List of Figures\n\nNo figures in this report."
-
-    if "## List of Figures" in renumbered_markdown:
-        renumbered_markdown = re.sub(
-            r"## List of Figures.*?(?=\n## |\Z)",
-            lof_block,
-            renumbered_markdown,
-            flags=re.DOTALL,
-        )
-
-    # Replace List of Tables based on actual captions present in markdown
-    tbls = re.findall(r"^Table\s+(\d+\.\d+)[:\s\-]+([^\n\r]+)", renumbered_markdown, re.MULTILINE | re.IGNORECASE)
-    if tbls:
-        seen_t: set[str] = set()
-        tbl_rows = []
-        for t_num, t_cap in tbls:
-            if t_num not in seen_t:
-                seen_t.add(t_num)
-                tbl_rows.append(f"| Table {t_num} | {t_cap.strip()} |")
-        lot_block = "## List of Tables\n\n| Table No. | Table Caption |\n| :--- | :--- |\n" + "\n".join(tbl_rows)
-    else:
-        lot_block = "## List of Tables\n\nNo tables in this report."
-
-    if "## List of Tables" in renumbered_markdown:
-        renumbered_markdown = re.sub(
-            r"## List of Tables.*?(?=\n## |\Z)",
-            lot_block,
-            renumbered_markdown,
-            flags=re.DOTALL,
-        )
-
-    # Replace References section with formatted IEEE bibliography
+    # Format IEEE bibliography using only real sources returned by search
     ieee_refs = ["## References\n"]
-    if final_sources:
-        for i, s in enumerate(final_sources, start=1):
-            s_title = s.get("title", "Reference Source").strip()
-            s_url = s.get("url", "").strip()
-            if s_url:
-                ieee_refs.append(f"[{i}] {s_title}, Available: {s_url}")
-            else:
-                ieee_refs.append(f"[{i}] {s_title}")
-    else:
-        ieee_refs.append(f"[1] {proj_name} Technical Specification and System Documentation, 2026.")
-        ieee_refs.append("[2] Multi-Agent Workflow and Graph Orchestration Reference, 2026.")
+    for i, s in enumerate(final_sources, start=1):
+        s_title = s.get("title", "Reference Source").strip().rstrip(".")
+        s_url = s.get("url", "").strip()
+        if s_url:
+            ieee_refs.append(f"[{i}] {s_title}, Available: {s_url}.")
+        else:
+            ieee_refs.append(f"[{i}] {s_title}.")
+    if len(final_sources) < 5:
+        ieee_refs.append("[Add more references here]")
     refs_block = "\n\n".join(ieee_refs)
     if "## References" in renumbered_markdown:
         renumbered_markdown = re.sub(

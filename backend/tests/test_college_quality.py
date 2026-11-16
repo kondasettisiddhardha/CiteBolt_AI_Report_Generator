@@ -3,6 +3,7 @@
 All external LLM and search calls are mocked. Zero network calls are made.
 """
 
+import io
 import json
 import os
 import re
@@ -10,12 +11,16 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+import docx
+from pypdf import PdfReader
+
 # Ensure backend directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.agents import section_engine
 from app.agents.section_engine import (
     build_compact_project_fact_sheet,
+    ensure_unique_figure_and_table_captions,
     extract_domain_and_project,
     format_front_matter_section,
     is_canned_boilerplate,
@@ -163,7 +168,7 @@ class TestCollegeReportQuality(unittest.TestCase):
         report = res.get("report", "")
         # The continuation text should be cleanly stitched into the section
         self.assertIn("passes structured factual summaries to the synthesis engine.", report)
-        self.assertTrue(report.strip().endswith("."))
+        self.assertTrue(report.strip().endswith((".", "[Add more references here]")))
         self.assertGreaterEqual(call_count[0], 2)
 
     def test_boilerplate_rejection_and_regeneration(self):
@@ -341,7 +346,8 @@ Fig. 4.1: System Architecture Diagram
         self.assertNotIn("+----------------", clean_md)
         self.assertNotIn("(Vaswani et al., 2017)", clean_md)
         self.assertIn("CiteBolt", clean_md)
-        self.assertIn("> [Insert diagram here]", clean_md)
+        self.assertIn("[Insert diagram here]", clean_md)
+        self.assertNotIn("> [Insert diagram here]", clean_md)
 
     def test_front_matter_certificate_and_toc(self):
         """Verify signature block has Guide, Coordinator, HOD, Dean, Examiner, and TOC has page numbers."""
@@ -704,6 +710,338 @@ This chapter introduces the engineering background and system motivation.
         self.assertGreaterEqual(len(fallback_events), 4)
         for fb in fallback_events:
             self.assertIn("empty_llm_output", fb.get("reason", ""))
+
+    def test_no_placeholder_in_abstract(self):
+        """Verify that Abstract strictly contains no '[Add your result here]' or placeholder tokens."""
+        topic = "AI Research Assistant"
+        context = "FastAPI backend with SQLite database."
+        fm = {"projectTitle": "CiteBolt Research Assistant"}
+
+        # 1. Test synthesis fallback contains no placeholders
+        synth = section_engine.synthesize_academic_abstract("CiteBolt Research Assistant", "AI Research", "Facts")
+        self.assertNotIn("[Add your", synth)
+        self.assertNotIn("[Add your result here]", synth)
+
+        # 2. Test abstract generation flow when LLM output contains placeholders
+        def mock_generate(prompt, *args, **kwargs):
+            if "abstract" in prompt.lower():
+                return (
+                    "This project implements an AI research assistant. The architecture leverages modular services. "
+                    "Evaluation results demonstrate [Add your result here] with high accuracy.",
+                    {"input_tokens": 100, "output_tokens": 100, "finish_reason": "stop"}
+                )
+            return "Content prose.", {"input_tokens": 50, "output_tokens": 50, "finish_reason": "stop"}
+
+        state = {
+            "topic": topic,
+            "context": context,
+            "report_type": "college",
+            "outline": [
+                {"level": 1, "title": "Abstract", "target_words": 150},
+            ],
+            "front_matter": fm,
+        }
+        with patch.object(section_engine, "generate_text", side_effect=mock_generate), \
+             patch.object(section_engine, "_collect_sources", return_value=[]):
+            res = section_engine.run_section_pipeline(state, emit=lambda ev: None, is_cancelled=lambda: False)
+
+        rep = res.get("report", "")
+        self.assertNotIn("[Add your result here]", rep)
+        self.assertNotIn("[Add your", rep)
+
+    def test_no_stray_blockquote_before_diagrams(self):
+        """Verify that stray '>' markers before [Insert diagram here] are stripped and ASCII frames cleaned."""
+        sample_md = (
+            "> [Insert diagram here: Fig. 4.1 - System Architecture]\n\n"
+            "+-------------------------------------------------+\n"
+            "| [Insert diagram here: Fig. 4.2 - High Level Flow] |\n"
+            "+-------------------------------------------------+\n\n"
+            "Prose text describing architecture."
+        )
+        cleaned = sanitize_section_markdown(sample_md, "Domain", "Project")
+        self.assertNotIn("> [Insert diagram here", cleaned)
+        self.assertIn("[Insert diagram here: Fig. 4.1 - System Architecture]", cleaned)
+        self.assertIn("[Insert diagram here: Fig. 4.2 - High Level Flow]", cleaned)
+
+    def test_unique_figure_captions(self):
+        """Verify that ensure_unique_figure_and_table_captions assigns unique sequential Fig. N.M and Table N.M."""
+        md = (
+            "# Chapter 4 System Design\n\n"
+            "## 4.1 Architecture\n\n"
+            "[Insert diagram here: Architecture Diagram]\n\n"
+            "[Insert diagram here: Sequence Diagram]\n\n"
+            "Table 4.1 Component Details\n\n"
+            "# Chapter 7 Implementation\n\n"
+            "## 7.1 Pipeline\n\n"
+            "[Insert diagram here: Execution Flowchart]\n\n"
+            "Table 7.1 Database Schema\n"
+        )
+        processed = ensure_unique_figure_and_table_captions(md)
+        self.assertIn("Fig. 4.1: Architecture Diagram", processed)
+        self.assertIn("Fig. 4.2: Sequence Diagram", processed)
+        self.assertIn("Table 4.1: Component Details", processed)
+        self.assertIn("Fig. 7.1: Execution Flowchart", processed)
+        self.assertIn("Table 7.1: Database Schema", processed)
+        # Check no duplicates
+        self.assertEqual(len(re.findall(r"Fig\. 4\.1\b", processed)), 2)  # once in placeholder, once in caption line
+        self.assertEqual(len(re.findall(r"Fig\. 4\.2\b", processed)), 2)
+
+    def test_chapter1_arabic_page_one_and_roman_front_matter(self):
+        """Verify Chapter 1 is Arabic page 1, front matter is Roman, and Chapter 11 does NOT reset Arabic page 1."""
+        from pypdf import PdfReader
+        md_content = (
+            "# CiteBolt Research Assistant\n\n"
+            "**A PROJECT REPORT**\n\n"
+            "Submitted in partial fulfillment of the requirements for the award of the degree of\n"
+            "**Bachelor of Technology**\n\n"
+            "Submitted by:\n**Student One** (PRN: 111)\n\n"
+            "Under the guidance of:\n**Dr. Guide**\n\n"
+            "Department of Computer Engineering\nUniversity of Technology\n\n"
+            "## Certificate\n\n"
+            "This is to certify that the project report entitled:\n\n"
+            "**\"CiteBolt Research Assistant\"**\n\n"
+            "**Signatures**\n\nGuide: Dr. Guide\n\n"
+            "## Acknowledgements\n\n"
+            "We express our gratitude to our guide.\n\n"
+            "## Abstract\n\n"
+            "This project presents CiteBolt Research Assistant addressing core challenges in autonomous research.\n\n"
+            "## Table of Contents\n\n"
+            "| Chapter / Section | Page No. |\n"
+            "| :--- | :--- |\n\n"
+            "## List of Figures\n\n"
+            "| Figure No. | Figure Caption |\n\n"
+            "## List of Tables\n\n"
+            "| Table No. | Table Caption |\n\n"
+            "# Chapter 1 Introduction\n\n"
+            "## 1.1 Overview of the Domain\n\n"
+            "The domain of multi-agent systems is rapidly expanding with LLM coordination.\n\n"
+            "## 1.2 Introduction to CiteBolt\n\n"
+            "CiteBolt provides end-to-end report generation with strict fact verification.\n\n"
+            "# Chapter 2 Literature Survey\n\n"
+            "## 2.1 Survey of Existing Work\n\n"
+            "Existing literature highlights challenges in hallucination reduction [1].\n\n"
+            "# Chapter 4 System Design\n\n"
+            "## 4.1 System Architecture\n\n"
+            "[Insert diagram here: Fig. 4.1 - System Architecture]\n\n"
+            "Fig. 4.1: System Architecture\n\n"
+            "# Chapter 11 Conclusion and Future Scope\n\n"
+            "## 11.1 Conclusion\n\n"
+            "The platform demonstrates reliable and verifiable report generation.\n\n"
+            "## References\n\n"
+            "[1] Multi-Agent Systems Documentation, 2026.\n"
+        )
+        pdf_bytes = markdown_to_pdf(md_content, topic="AI Assistant", report_type="college")
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        num_pages = len(reader.pages)
+        self.assertGreaterEqual(num_pages, 6)
+
+        # Find which physical page contains "Chapter 1 Introduction"
+        ch1_physical_page = None
+        ch11_physical_page = None
+        toc_physical_page = None
+        for p_idx, page in enumerate(reader.pages, start=1):
+            txt = page.extract_text() or ""
+            if "Chapter 1 Introduction" in txt:
+                ch1_physical_page = p_idx
+            if "Chapter 11 Conclusion" in txt:
+                ch11_physical_page = p_idx
+            if "Table of Contents" in txt:
+                toc_physical_page = p_idx
+
+        self.assertIsNotNone(ch1_physical_page, "Chapter 1 not found in PDF pages")
+        self.assertIsNotNone(ch11_physical_page, "Chapter 11 not found in PDF pages")
+        self.assertGreater(ch1_physical_page, 2, "Chapter 1 should appear after front matter")
+        self.assertGreater(ch11_physical_page, ch1_physical_page, "Chapter 11 must appear after Chapter 1")
+
+        # In TOC page, check that Chapter 1 is listed
+        toc_text = reader.pages[toc_physical_page - 1].extract_text()
+        self.assertIn("Chapter 1 Introduction", toc_text)
+        # Verify Certificate and Signatures are NOT in the TOC
+        self.assertNotIn("Certificate", toc_text)
+        self.assertNotIn("Signatures", toc_text)
+        # Verify List of Figures and List of Tables ARE in the TOC
+        self.assertIn("List of Figures", toc_text)
+        self.assertIn("List of Tables", toc_text)
+
+        # Check footer page number of Chapter 1 page: it must end with '1' (Arabic 1), not a Roman numeral!
+        ch1_text = reader.pages[ch1_physical_page - 1].extract_text()
+        self.assertTrue(ch1_text.strip().endswith("1"), f"Chapter 1 page footer should be Arabic '1', got page text ending with: {repr(ch1_text[-20:])}")
+
+    def test_college_title_page_centered_and_grouped(self):
+        """Verify that the college title page in PDF and DOCX puts each item on its own centered line with clear grouping."""
+        fm = {
+            "projectTitle": "Autonomous Edge Robotics Platform",
+            "degree": "Bachelor of Technology in Robotics",
+            "teamMembers": [
+                {"name": "Devin AI", "prn": "PRN-1001"},
+                {"name": "Ada Lovelace", "prn": "PRN-1002"},
+            ],
+            "guide": "Prof. Charles Babbage",
+            "department": "Department of Mechanical & Computing",
+            "university": "Apex Institute of Technology",
+            "academicYear": "2024-2025",
+        }
+        title_page_md = format_front_matter_section("Title Page", "Autonomous Edge Robotics Platform", fm)
+        full_md = f"{title_page_md}\n\n## Certificate\nCertified bonafide work.\n\n# Chapter 1 Introduction\nContent."
+
+        # 1. Verify PDF rendering
+        pdf_bytes = markdown_to_pdf(full_md, title=fm["projectTitle"], report_type="college")
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        page1_txt = reader.pages[0].extract_text()
+
+        # Check order of items on title page
+        items = [
+            "Autonomous Edge Robotics Platform",
+            "A PROJECT REPORT",
+            "Submitted in partial fulfillment of the requirements for the award of the degree of",
+            "Bachelor of Technology in Robotics",
+            "Submitted by",
+            "Devin AI (PRN: PRN-1001)",
+            "Ada Lovelace (PRN: PRN-1002)",
+            "Under the guidance of",
+            "Prof. Charles Babbage",
+            "Department Of Mechanical & Computing",
+            "Apex Institute Of Technology",
+            "Academic Year: 2024-2025",
+        ]
+        last_pos = -1
+        for item in items:
+            pos = page1_txt.find(item)
+            self.assertNotEqual(pos, -1, f"Item '{item}' missing from PDF title page:\n{page1_txt}")
+            self.assertGreater(pos, last_pos, f"Item '{item}' out of order on PDF title page")
+            last_pos = pos
+
+        # 2. Verify DOCX rendering
+        docx_bytes = markdown_to_docx(full_md, title=fm["projectTitle"], report_type="college")
+        doc = docx.Document(io.BytesIO(docx_bytes))
+
+        # Find paragraphs before Certificate
+        title_paras = []
+        for p in doc.paragraphs:
+            if "Certificate" in p.text:
+                break
+            if p.text.strip():
+                title_paras.append(p)
+
+        self.assertGreaterEqual(len(title_paras), 10)
+        for p in title_paras:
+            # Each item must be centered
+            self.assertEqual(
+                p.alignment,
+                docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER,
+                f"Title page paragraph should be centered: '{p.text}'",
+            )
+
+        # Check degree is bold in DOCX
+        degree_p = next((p for p in title_paras if "Bachelor of Technology" in p.text), None)
+        self.assertIsNotNone(degree_p)
+        self.assertTrue(any(run.bold for run in degree_p.runs))
+
+    def test_college_lists_render_real_bullets_and_numbers(self):
+        """Verify markdown bullets and numbered lists render with real bullet glyphs and numbers in PDF and DOCX."""
+        sample_md = """# Chapter 5 Implementation Details
+### 5.1 Architecture Components
+The following key modules are implemented:
+- Agent coordinator module
+- Database repository abstraction
+- Streaming response handler
+
+Numbered deployment steps:
+1. Initialize container environment
+2. Run database migrations
+3. Bind service endpoints
+"""
+        # 1. PDF
+        pdf_bytes = markdown_to_pdf(sample_md, title="Test Lists", report_type="college")
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        full_text = "\n".join(page.extract_text() for page in reader.pages)
+
+        # Check bullet glyph
+        self.assertIn("• Agent coordinator module", full_text)
+        self.assertIn("• Database repository abstraction", full_text)
+        self.assertIn("• Streaming response handler", full_text)
+
+        # Check numbers
+        self.assertIn("1. Initialize container environment", full_text)
+        self.assertIn("2. Run database migrations", full_text)
+        self.assertIn("3. Bind service endpoints", full_text)
+
+        # 2. DOCX
+        docx_bytes = markdown_to_docx(sample_md, title="Test Lists", report_type="college")
+        doc = docx.Document(io.BytesIO(docx_bytes))
+        bullet_paras = [p for p in doc.paragraphs if p.style.name == "List Bullet"]
+        number_paras = [p for p in doc.paragraphs if p.style.name == "List Number"]
+
+        self.assertEqual(len(bullet_paras), 3)
+        self.assertEqual(len(number_paras), 3)
+        self.assertIn("Agent coordinator module", bullet_paras[0].text)
+        self.assertIn("Initialize container environment", number_paras[0].text)
+
+    def test_college_references_no_fabrication_and_placeholder(self):
+        """Verify that References never fabricates entries and adds placeholder line when < 5 sources."""
+        # Case A: Fewer than 5 sources (e.g. 2 real sources)
+        sources_2 = [
+            {"title": "FastAPI Framework Documentation", "url": "https://fastapi.tiangolo.com"},
+            {"title": "ReportLab Reference Manual", "url": "https://docs.reportlab.com"},
+        ]
+        state_few = {
+            "topic": "Microservices Engine",
+            "context": "FastAPI, Python.",
+            "report_type": "college",
+            "outline": [
+                {"level": 1, "title": "Chapter 1 Introduction"},
+                {"level": 2, "title": "1.1 Overview", "target_words": 30},
+                {"level": 1, "title": "References"},
+            ],
+        }
+
+        def mock_gen_text(*args, **kwargs):
+            return "Microservices architecture overview text.", {
+                "input_tokens": 40,
+                "output_tokens": 40,
+                "total_tokens": 80,
+                "finish_reason": "stop",
+            }
+
+        with patch.object(section_engine, "_collect_sources", return_value=sources_2), patch.object(
+            section_engine, "generate_text", side_effect=mock_gen_text
+        ):
+            res_few = section_engine.run_section_pipeline(state_few, lambda ev: None, lambda: False)
+
+        report_few = res_few.get("report", "")
+        self.assertIn("[1] FastAPI Framework Documentation, Available: https://fastapi.tiangolo.com.", report_few)
+        self.assertIn("[2] ReportLab Reference Manual, Available: https://docs.reportlab.com.", report_few)
+        self.assertIn("[Add more references here]", report_few)
+        # Verify no fabricated standard entries
+        self.assertNotIn("IEEE Std 730-2014", report_few)
+        self.assertNotIn("4+1 View Model", report_few)
+        self.assertNotIn("Representational State Transfer (REST) Architectural Style", report_few)
+
+        # Case B: 5 or more sources (no placeholder line)
+        sources_5 = [
+            {"title": f"Source Paper {i}", "url": f"https://example.com/paper{i}"}
+            for i in range(1, 6)
+        ]
+        state_5 = {
+            "topic": "Microservices Engine",
+            "context": "FastAPI, Python.",
+            "sources": sources_5,
+            "report_type": "college",
+            "outline": [
+                {"level": 1, "title": "Chapter 1 Introduction"},
+                {"level": 2, "title": "1.1 Overview", "target_words": 30},
+                {"level": 1, "title": "References"},
+            ],
+        }
+        with patch.object(section_engine, "_collect_sources", return_value=sources_5), patch.object(
+            section_engine, "generate_text", side_effect=mock_gen_text
+        ):
+            res_5 = section_engine.run_section_pipeline(state_5, lambda ev: None, lambda: False)
+
+        report_5 = res_5.get("report", "")
+        self.assertIn("[5] Source Paper 5, Available: https://example.com/paper5.", report_5)
+        self.assertNotIn("[Add more references here]", report_5)
+        self.assertNotIn("IEEE Std 730-2014", report_5)
 
 
 if __name__ == "__main__":

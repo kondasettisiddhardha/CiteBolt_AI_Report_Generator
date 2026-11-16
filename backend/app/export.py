@@ -126,7 +126,7 @@ def _md_inline_to_reportlab(text: str, is_template: bool = False) -> str:
     escaped = html.escape(text or "")
     escaped = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
     escaped = re.sub(r"\*(.+?)\*", r"<i>\1</i>", escaped)
-    escaped = re.sub(r"`([^`]+)`", r'<font face="Courier">\1</font>', escaped)
+    escaped = re.sub(r"`([^`]+)`", r'<font face="Courier" size="10">\1</font>', escaped)
     if is_template:
         escaped = re.sub(
             r"\[(\d{1,3})\]",
@@ -229,26 +229,32 @@ def _render_pdf_reportlab(
     if is_template:
         font_regular = "Times-Roman"
         font_bold = "Times-Bold"
-        reg_ttf = FONTS / "DejaVuSerif.ttf"
-        bold_ttf = FONTS / "DejaVuSerif-Bold.ttf"
-        italic_ttf = FONTS / "DejaVuSerif-Italic.ttf"
-        bi_ttf = FONTS / "DejaVuSerif-BoldItalic.ttf"
+        font_italic = "Times-Italic"
+        font_bolditalic = "Times-BoldItalic"
+
+        lib_reg = FONTS / "LiberationSerif-Regular.ttf"
+        lib_bold = FONTS / "LiberationSerif-Bold.ttf"
+        lib_italic = FONTS / "LiberationSerif-Italic.ttf"
+        lib_bi = FONTS / "LiberationSerif-BoldItalic.ttf"
         sans_ttf = FONTS / "DejaVuSans.ttf"
-        if reg_ttf.is_file():
+
+        if lib_reg.is_file() and lib_bold.is_file():
             try:
-                pdfmetrics.registerFont(TTFont("DejaVuSerif", str(reg_ttf)))
-                pdfmetrics.registerFont(TTFont("DejaVuSerif-Bold", str(bold_ttf if bold_ttf.is_file() else reg_ttf)))
-                pdfmetrics.registerFont(TTFont("DejaVuSerif-Italic", str(italic_ttf if italic_ttf.is_file() else reg_ttf)))
-                pdfmetrics.registerFont(TTFont("DejaVuSerif-BoldItalic", str(bi_ttf if bi_ttf.is_file() else reg_ttf)))
+                pdfmetrics.registerFont(TTFont("LiberationSerif", str(lib_reg)))
+                pdfmetrics.registerFont(TTFont("LiberationSerif-Bold", str(lib_bold)))
+                pdfmetrics.registerFont(TTFont("LiberationSerif-Italic", str(lib_italic if lib_italic.is_file() else lib_reg)))
+                pdfmetrics.registerFont(TTFont("LiberationSerif-BoldItalic", str(lib_bi if lib_bi.is_file() else lib_bold)))
                 pdfmetrics.registerFontFamily(
-                    "DejaVuSerif",
-                    normal="DejaVuSerif",
-                    bold="DejaVuSerif-Bold",
-                    italic="DejaVuSerif-Italic",
-                    boldItalic="DejaVuSerif-BoldItalic",
+                    "LiberationSerif",
+                    normal="LiberationSerif",
+                    bold="LiberationSerif-Bold",
+                    italic="LiberationSerif-Italic",
+                    boldItalic="LiberationSerif-BoldItalic",
                 )
-                font_regular = "DejaVuSerif"
-                font_bold = "DejaVuSerif-Bold"
+                font_regular = "LiberationSerif"
+                font_bold = "LiberationSerif-Bold"
+                font_italic = "LiberationSerif-Italic"
+                font_bolditalic = "LiberationSerif-BoldItalic"
             except Exception:
                 pass
         if sans_ttf.is_file():
@@ -295,11 +301,14 @@ def _render_pdf_reportlab(
                 if is_template:
                     self.setFont(font_regular, 10)
                     self.setFillColor(colors.black)
-                    if self._pageNumber < ch1:
+                    if self._pageNumber == 1:
+                        pass  # Title page: no page number displayed
+                    elif self._pageNumber < ch1:
                         page_label = _to_roman(self._pageNumber)
+                        self.drawRightString(A4[0] - right_margin, 36, page_label)
                     else:
                         page_label = str(self._pageNumber - ch1 + 1)
-                    self.drawRightString(A4[0] - right_margin, 36, page_label)
+                        self.drawRightString(A4[0] - right_margin, 36, page_label)
                 else:
                     self.setFont(font_regular, 8)
                     self.setFillColor(colors.HexColor("#9ca3af"))
@@ -321,6 +330,12 @@ def _render_pdf_reportlab(
         def beforeBuild(self) -> None:
             self._seen_figs.clear()
             self._seen_tbls.clear()
+            NumberedCanvas._chapter1_page = None
+
+        def build(self, flowables: Any, **kwargs: Any) -> None:
+            self._seen_figs.clear()
+            self._seen_tbls.clear()
+            return super().build(flowables, **kwargs)
 
         def afterFlowable(self, flowable: Flowable) -> None:
             if isinstance(flowable, Paragraph):
@@ -329,15 +344,21 @@ def _render_pdf_reportlab(
                 page = getattr(getattr(self, "canv", None), "_pageNumber", 1)
                 low = raw_text.lower()
                 if style == "Heading1":
-                    if "chapter 1" in low:
+                    if re.search(r"\bchapter\s+1\b(?!\d)", low):
                         NumberedCanvas._chapter1_page = page
-                    if not any(k in low for k in ["table of contents", "list of figures", "list of tables"]):
+                    # Exclude title page, certificate, signatures, and table of contents from TOC
+                    if not any(k in low for k in ["title page", "certificate", "signatures", "table of contents"]):
                         self.notify("TOCEntry", (0, raw_text, page, None))
                 elif style == "Heading2":
-                    if not any(k in low for k in ["table of contents", "list of figures", "list of tables"]):
-                        self.notify("TOCEntry", (1, raw_text, page, None))
+                    if not any(k in low for k in ["title page", "certificate", "signatures", "table of contents"]):
+                        # List of Figures and List of Tables are top-level TOC entries
+                        if any(k in low for k in ["list of figures", "list of tables"]):
+                            self.notify("TOCEntry", (0, raw_text, page, None))
+                        else:
+                            self.notify("TOCEntry", (1, raw_text, page, None))
                 elif style == "Heading3":
-                    self.notify("TOCEntry", (2, raw_text, page, None))
+                    if not any(k in low for k in ["certificate", "signatures"]):
+                        self.notify("TOCEntry", (2, raw_text, page, None))
                 else:
                     fig_m = re.search(r"(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+([^\]\n\r]+)", raw_text, re.IGNORECASE)
                     if fig_m and not low.startswith(("as shown", "refer to", "in fig", "see fig")):
@@ -490,6 +511,53 @@ def _render_pdf_reportlab(
         leading=14 if is_template else 11.5,
         textColor=colors.black if is_template else colors.HexColor("#111827"),
     )
+    title_page_h1_style = ParagraphStyle(
+        "TitlePageH1",
+        fontName=font_bold,
+        fontSize=20 if is_template else 22,
+        leading=26,
+        alignment=1,  # TA_CENTER
+        textColor=colors.black,
+        spaceAfter=14,
+    )
+    title_page_bold_style = ParagraphStyle(
+        "TitlePageBold",
+        fontName=font_bold,
+        fontSize=12,
+        leading=18,
+        alignment=1,  # TA_CENTER
+        textColor=colors.black,
+        spaceAfter=8,
+    )
+    title_page_text_style = ParagraphStyle(
+        "TitlePageText",
+        fontName=font_regular,
+        fontSize=12,
+        leading=18,
+        alignment=1,  # TA_CENTER
+        textColor=colors.black,
+        spaceAfter=6,
+    )
+    caption_style = ParagraphStyle(
+        "CaptionStyle",
+        fontName=font_bold,
+        fontSize=11 if is_template else 9.5,
+        leading=16 if is_template else 13,
+        alignment=1 if is_template else 0,
+        textColor=colors.black if is_template else colors.HexColor("#1f2937"),
+        spaceBefore=4,
+        spaceAfter=8,
+    )
+    diagram_box_style = ParagraphStyle(
+        "DiagramBoxStyle",
+        fontName=font_regular,
+        fontSize=11 if is_template else 9.5,
+        leading=16 if is_template else 13,
+        alignment=1,  # TA_CENTER
+        textColor=colors.HexColor("#374151") if is_template else colors.HexColor("#4b5563"),
+        spaceBefore=6,
+        spaceAfter=4,
+    )
 
     toc = TableOfContents()
     lof = ListOfFigures()
@@ -563,60 +631,17 @@ def _render_pdf_reportlab(
         story.append(Spacer(1, 14))
 
     # Body elements
-    skip_next_table = False
+    skip_until_next_heading = False
+    in_title_page = is_template
+    next_is_guide = False
+    prev_was_guide = False
     blocks = _body_blocks(body_md)
     for block in blocks:
         kind = block["kind"]
         text = block.get("text", "")
-        if kind == "table":
-            if is_template and skip_next_table:
-                skip_next_table = False
-                continue
-            skip_next_table = False
-            raw_rows = block.get("rows", [])
-            if raw_rows:
-                num_cols = max(len(r) for r in raw_rows)
-                col_width = printable_width / num_cols if num_cols else printable_width
-                table_data = []
-                for row_idx, r in enumerate(raw_rows):
-                    row_cells = []
-                    style_to_use = table_cell_bold if row_idx == 0 else table_cell_style
-                    for cell in r:
-                        row_cells.append(Paragraph(_md_inline_to_reportlab(cell, is_template=is_template), style_to_use))
-                    while len(row_cells) < num_cols:
-                        row_cells.append(Paragraph("", style_to_use))
-                    table_data.append(row_cells)
-                t = Table(table_data, colWidths=[col_width] * num_cols)
-                if is_template:
-                    t.setStyle(
-                        TableStyle([
-                            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.black),
-                            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#4b5563")),
-                            ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
-                            ("TOPPADDING", (0, 0), (-1, -1), 4),
-                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                        ])
-                    )
-                else:
-                    t.setStyle(
-                        TableStyle([
-                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f8fafc")),
-                            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#cbd5e1")),
-                            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-                            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
-                            ("TOPPADDING", (0, 0), (-1, -1), 4),
-                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                        ])
-                    )
-                story.append(Spacer(1, 6))
-                story.append(t)
-                story.append(Spacer(1, 8))
-        elif kind in ("h1", "h2", "h3"):
-            skip_next_table = False
+
+        if kind in ("h1", "h2", "h3"):
+            skip_until_next_heading = False
             norm_heading = text.lower()
             is_fm_major = is_template and any(
                 k in norm_heading
@@ -634,48 +659,139 @@ def _render_pdf_reportlab(
                     "appendix b",
                 ]
             )
-            if is_fm_major and len(story) > 0:
+            is_chapter = bool(re.search(r"^\s*chapter\s+\d+", text, re.IGNORECASE))
+
+            if is_fm_major:
+                in_title_page = False
+
+            # Page break ONLY before chapters or major front matter sections
+            if (is_fm_major or (is_template and is_chapter)) and len(story) > 0:
                 story.append(PageBreak())
 
             if is_template and "table of contents" in norm_heading:
                 story.append(Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style))
                 story.append(Spacer(1, 8))
                 story.append(toc)
-                skip_next_table = True
+                skip_until_next_heading = True
                 continue
             elif is_template and "list of figures" in norm_heading:
                 story.append(Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style))
                 story.append(Spacer(1, 8))
                 story.append(lof)
-                skip_next_table = True
+                skip_until_next_heading = True
                 continue
             elif is_template and "list of tables" in norm_heading:
                 story.append(Paragraph(_md_inline_to_reportlab(text, is_template=True), h1_style))
                 story.append(Spacer(1, 8))
                 story.append(lot)
-                skip_next_table = True
+                skip_until_next_heading = True
                 continue
 
             if kind == "h1":
-                if is_template and len(story) > 0 and not is_fm_major:
+                if not is_template and len(story) > 0:
                     story.append(PageBreak())
-                if "chapter 1" in text.lower():
+                if re.search(r"\bchapter\s+1\b(?!\d)", text.lower()):
                     story.append(MarkChapter1())
-                story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h1_style))
+                if in_title_page:
+                    story.append(Spacer(1, 40))
+                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=True), title_page_h1_style))
+                    story.append(Spacer(1, 20))
+                else:
+                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h1_style))
             elif kind == "h2":
                 heading_style = h1_style if is_fm_major else h2_style
                 story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), heading_style))
             elif kind == "h3":
                 story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h3_style))
+            continue
+
+        if skip_until_next_heading:
+            continue
+
+        if kind == "table":
+            raw_rows = block.get("rows", [])
+            if raw_rows:
+                num_cols = max(len(r) for r in raw_rows)
+                col_width = printable_width / num_cols if num_cols else printable_width
+                table_data = []
+                for row_idx, r in enumerate(raw_rows):
+                    row_cells = []
+                    style_to_use = table_cell_bold if row_idx == 0 else table_cell_style
+                    for cell in r:
+                        row_cells.append(Paragraph(_md_inline_to_reportlab(cell, is_template=is_template), style_to_use))
+                    while len(row_cells) < num_cols:
+                        row_cells.append(Paragraph("", style_to_use))
+                    table_data.append(row_cells)
+                t = Table(table_data, colWidths=[col_width] * num_cols)
+                if is_template:
+                    t.setStyle(
+                        TableStyle([
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.black),
+                            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#4b5563")),
+                            ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+                            ("TOPPADDING", (0, 0), (-1, -1), 4),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                        ])
+                    )
+                else:
+                    t.setStyle(
+                        TableStyle([
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f8fafc")),
+                            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#cbd5e1")),
+                            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                            ("TOPPADDING", (0, 0), (-1, -1), 4),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                        ])
+                    )
+                story.append(Spacer(1, 6))
+                story.append(t)
+                story.append(Spacer(1, 8))
         elif kind == "bullet":
-            skip_next_table = False
             story.append(Paragraph("&bull; " + _md_inline_to_reportlab(text, is_template=is_template), bullet_style))
         elif kind == "number":
-            skip_next_table = False
-            story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), bullet_style))
+            num_str = block.get("num", "1")
+            story.append(Paragraph(f"{num_str}. " + _md_inline_to_reportlab(text, is_template=is_template), bullet_style))
         else:
-            skip_next_table = False
-            story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), body_style))
+            if in_title_page:
+                cleaned_text = text.strip()
+                norm_clean = cleaned_text.lower()
+                if (
+                    norm_clean == "a project report"
+                    or norm_clean.startswith("submitted in partial fulfillment")
+                    or norm_clean == "submitted by"
+                    or norm_clean.startswith("under the guidance of")
+                    or prev_was_guide
+                ):
+                    story.append(Spacer(1, 16))
+                if norm_clean.startswith("under the guidance of"):
+                    next_is_guide = True
+                elif next_is_guide:
+                    next_is_guide = False
+                    prev_was_guide = True
+                elif prev_was_guide:
+                    prev_was_guide = False
+
+                if cleaned_text.startswith("**") and cleaned_text.endswith("**"):
+                    story.append(Paragraph(_md_inline_to_reportlab(cleaned_text, is_template=True), title_page_bold_style))
+                else:
+                    story.append(Paragraph(_md_inline_to_reportlab(cleaned_text, is_template=True), title_page_text_style))
+            else:
+                cleaned_diag = re.sub(r"^\s*>\s*", "", text).strip()
+                if cleaned_diag.startswith("[Insert diagram here"):
+                    story.append(Paragraph(_md_inline_to_reportlab(cleaned_diag, is_template=is_template), diagram_box_style))
+                elif re.match(r"^(?:Fig\.|Figure)\s+\d+\.\d+", text, re.IGNORECASE):
+                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style))
+                elif re.match(r"^Table\s+\d+\.\d+", text, re.IGNORECASE):
+                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style))
+                else:
+                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), body_style))
 
     # Sources section (only if not already in template body)
     if structured and not (is_template and "references" in body_md.lower()):
@@ -1066,6 +1182,9 @@ def markdown_to_docx(
 
     # --- body ---
     body_items = _body_blocks(body_md)
+    in_title_page = is_template
+    next_is_guide = False
+    prev_was_guide = False
     for idx, block in enumerate(body_items):
         kind = block["kind"]
         payload = block.get("text", "")
@@ -1089,7 +1208,9 @@ def markdown_to_docx(
                     "appendix b",
                 ]
             )
-            if is_template and "chapter 1" in norm_payload and len(document.sections) == 1:
+            if is_fm_break:
+                in_title_page = False
+            if is_template and re.search(r"\bchapter\s+1\b(?!\d)", norm_payload) and len(document.sections) == 1:
                 new_sec = document.add_section()
                 new_sec.top_margin = Inches(1.0)
                 new_sec.bottom_margin = Inches(1.0)
@@ -1100,7 +1221,11 @@ def markdown_to_docx(
                 document.add_page_break()
 
             heading_lvl = 1 if (kind == "h1" or is_fm_break) else 2 if kind == "h2" else 3
-            document.add_heading(payload, level=heading_lvl)
+            h = document.add_heading(payload, level=heading_lvl)
+            if in_title_page and kind == "h1":
+                h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                h.paragraph_format.space_before = Pt(36)
+                h.paragraph_format.space_after = Pt(16)
             if is_template and "table of contents" in norm_payload:
                 from docx.oxml import OxmlElement
                 from docx.oxml.ns import qn
@@ -1131,7 +1256,27 @@ def markdown_to_docx(
             _add_inline(paragraph, payload, is_template=is_template)
         else:
             paragraph = document.add_paragraph()
-            if is_template:
+            if in_title_page:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                norm_p = payload.strip().lower()
+                if (
+                    norm_p == "a project report"
+                    or norm_p.startswith("submitted in partial fulfillment")
+                    or norm_p == "submitted by"
+                    or norm_p.startswith("under the guidance of")
+                    or prev_was_guide
+                ):
+                    paragraph.paragraph_format.space_before = Pt(14)
+                if norm_p.startswith("under the guidance of"):
+                    next_is_guide = True
+                elif next_is_guide:
+                    next_is_guide = False
+                    prev_was_guide = True
+                elif prev_was_guide:
+                    prev_was_guide = False
+                paragraph.paragraph_format.space_after = Pt(4)
+                paragraph.paragraph_format.line_spacing = 1.15
+            elif is_template:
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
                 paragraph.paragraph_format.line_spacing = 1.5
             _add_inline(paragraph, payload, is_template=is_template)
@@ -1224,6 +1369,7 @@ def _add_inline(paragraph, text: str, is_template: bool = False) -> None:
 def _add_table(document, rows: list[list[str]]) -> None:
     """Add a Markdown table as a real Word table with a shaded header."""
     from docx.shared import Pt, RGBColor
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 
     if not rows:
         return
@@ -1235,6 +1381,7 @@ def _add_table(document, rows: list[list[str]]) -> None:
     for row_index, row in enumerate(rows):
         for column in range(columns):
             cell = table.cell(row_index, column)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
             cell.text = ""
             paragraph = cell.paragraphs[0]
             paragraph.paragraph_format.space_after = Pt(2)
@@ -1295,7 +1442,12 @@ def _body_blocks(markdown: str) -> list[dict[str, str]]:
             blocks.append({"kind": "bullet", "text": re.sub(r"^[-*]\s+", "", stripped)})
         elif re.match(r"^\d+[.)]\s+", stripped):
             flush()
-            blocks.append({"kind": "number", "text": re.sub(r"^\d+[.)]\s+", "", stripped)})
+            m = re.match(r"^(\d+)[.)]\s+(.*)", stripped)
+            blocks.append({
+                "kind": "number",
+                "text": m.group(2) if m else stripped,
+                "num": m.group(1) if m else "1",
+            })
         elif stripped.startswith("|"):
             cells = [cell.strip() for cell in stripped.strip("|").split("|")]
             if all(set(cell) <= set("-: ") for cell in cells):

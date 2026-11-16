@@ -17,10 +17,16 @@ import {
   COLLEGE_OUTLINE_TEMPLATE,
   scaleOutlineWords,
   DEFAULT_COLLEGE_FRONT_MATTER,
+  cleanTopicForTitle,
 } from "@/lib/collegeTemplate";
 
 export type { OutlineSection, TeamMember, CollegeFrontMatter };
-export { COLLEGE_OUTLINE_TEMPLATE, scaleOutlineWords, DEFAULT_COLLEGE_FRONT_MATTER };
+export {
+  COLLEGE_OUTLINE_TEMPLATE,
+  scaleOutlineWords,
+  DEFAULT_COLLEGE_FRONT_MATTER,
+  cleanTopicForTitle,
+};
 
 export interface SavedTemplateItem {
   id: string;
@@ -29,6 +35,9 @@ export interface SavedTemplateItem {
 }
 
 interface TemplatePanelProps {
+  topic?: string;
+  isTitleManuallyEdited?: boolean;
+  onTitleManualEditChange?: (manuallyEdited: boolean) => void;
   targetTotalWords: number;
   outline?: OutlineSection[];
   frontMatter?: CollegeFrontMatter;
@@ -43,6 +52,9 @@ interface TemplatePanelProps {
 }
 
 export default function TemplatePanel({
+  topic = "",
+  isTitleManuallyEdited = false,
+  onTitleManualEditChange,
   targetTotalWords,
   outline,
   frontMatter,
@@ -64,20 +76,36 @@ export default function TemplatePanel({
       .catch(() => {});
   }, []);
 
-  const [collegeForm, setCollegeForm] = useState<CollegeFrontMatter>(
-    frontMatter ?? {
-      projectTitle: "",
-      teamMembers: [{ name: "", prn: "" }],
-      guide: "",
-      coordinator: "",
-      hod: "",
-      dean: "",
-      department: "",
-      university: "",
-      academicYear: "",
-      submissionMonthYear: "",
-    },
-  );
+  const cleanTopic = cleanTopicForTitle(topic);
+
+  const [collegeForm, setCollegeForm] = useState<CollegeFrontMatter>(() => {
+    const base = frontMatter ?? DEFAULT_COLLEGE_FRONT_MATTER;
+    if (!isTitleManuallyEdited && cleanTopic && !base.projectTitle) {
+      return { ...base, projectTitle: cleanTopic };
+    }
+    return base;
+  });
+
+  // Keep collegeForm in sync with frontMatter from parent or cleanTopic
+  useEffect(() => {
+    if (frontMatter) {
+      setCollegeForm((prev) => {
+        const titleToUse =
+          !isTitleManuallyEdited && cleanTopic
+            ? cleanTopic
+            : (frontMatter.projectTitle || prev.projectTitle);
+        return {
+          ...frontMatter,
+          projectTitle: titleToUse,
+        };
+      });
+    } else if (!isTitleManuallyEdited && cleanTopic) {
+      setCollegeForm((prev) => {
+        if (prev.projectTitle === cleanTopic) return prev;
+        return { ...prev, projectTitle: cleanTopic };
+      });
+    }
+  }, [frontMatter, cleanTopic, isTitleManuallyEdited]);
 
   const hasTemplate = Boolean(outline && outline.length > 0);
 
@@ -200,6 +228,25 @@ export default function TemplatePanel({
 
   const handleCollegeFieldChange = (field: keyof CollegeFrontMatter, val: unknown) => {
     const updated = { ...collegeForm, [field]: val };
+    setCollegeForm(updated);
+    if (outline) {
+      onUpdate(outline, updated, true, templateName);
+    }
+  };
+
+  const handleProjectTitleChange = (val: string) => {
+    const isManual = cleanTopic ? val !== cleanTopic : Boolean(val.trim());
+    onTitleManualEditChange?.(isManual);
+    const updated = { ...collegeForm, projectTitle: val };
+    setCollegeForm(updated);
+    if (outline) {
+      onUpdate(outline, updated, true, templateName);
+    }
+  };
+
+  const handleResetTitleToTopic = () => {
+    onTitleManualEditChange?.(false);
+    const updated = { ...collegeForm, projectTitle: cleanTopic };
     setCollegeForm(updated);
     if (outline) {
       onUpdate(outline, updated, true, templateName);
@@ -367,11 +414,22 @@ export default function TemplatePanel({
 
           <div className="grid gap-2.5 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label className="block text-[11px] font-medium text-muted">Project Title</label>
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] font-medium text-muted">Project Title</label>
+                {isTitleManuallyEdited && cleanTopic ? (
+                  <button
+                    type="button"
+                    onClick={handleResetTitleToTopic}
+                    className="text-[11px] font-medium text-accent hover:underline cursor-pointer"
+                  >
+                    Reset to topic
+                  </button>
+                ) : null}
+              </div>
               <input
                 type="text"
                 value={collegeForm.projectTitle}
-                onChange={(e) => handleCollegeFieldChange("projectTitle", e.target.value)}
+                onChange={(e) => handleProjectTitleChange(e.target.value)}
                 placeholder="e.g. AI-Powered Autonomous Cloud Cost Optimization System"
                 className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
               />
@@ -507,6 +565,83 @@ export default function TemplatePanel({
                 placeholder="e.g. November 2026"
                 className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
               />
+            </div>
+          </div>
+
+          {/* About your project (optional facts to prevent hallucinated components) */}
+          <div className="border-t border-line pt-3 mt-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-accent">
+              About your project (optional facts)
+            </h4>
+            <p className="mt-0.5 text-[11px] text-muted">
+              Supplies ground truth for chapters 3-10 so technical details (tables, endpoints, deployment) are never invented.
+            </p>
+            <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
+              <div>
+                <label className="block text-[11px] font-medium text-muted">Degree Name (Title page)</label>
+                <input
+                  type="text"
+                  value={collegeForm.degree || ""}
+                  onChange={(e) => handleCollegeFieldChange("degree", e.target.value)}
+                  placeholder="e.g. Bachelor of Technology in Computer Engineering"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-muted">Team Size</label>
+                <input
+                  type="text"
+                  value={collegeForm.teamSize || ""}
+                  onChange={(e) => handleCollegeFieldChange("teamSize", e.target.value)}
+                  placeholder="e.g. 3 students"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-muted">Project Duration</label>
+                <input
+                  type="text"
+                  value={collegeForm.duration || ""}
+                  onChange={(e) => handleCollegeFieldChange("duration", e.target.value)}
+                  placeholder="e.g. 16 weeks / Final semester"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-muted">Deployment Status</label>
+                <input
+                  type="text"
+                  value={collegeForm.deploymentStatus || ""}
+                  onChange={(e) => handleCollegeFieldChange("deploymentStatus", e.target.value)}
+                  placeholder="e.g. Local development / Planned cloud deployment"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-medium text-muted">Database Tables</label>
+                <input
+                  type="text"
+                  value={collegeForm.databaseTables || ""}
+                  onChange={(e) => handleCollegeFieldChange("databaseTables", e.target.value)}
+                  placeholder="e.g. users, reports, research_sources, audit_logs"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-medium text-muted">Main API Endpoints</label>
+                <input
+                  type="text"
+                  value={collegeForm.mainEndpoints || ""}
+                  onChange={(e) => handleCollegeFieldChange("mainEndpoints", e.target.value)}
+                  placeholder="e.g. POST /api/runs, GET /api/runs/{id}, POST /api/auth/otp"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
             </div>
           </div>
         </div>

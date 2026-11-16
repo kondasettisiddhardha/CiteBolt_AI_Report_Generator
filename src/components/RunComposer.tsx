@@ -22,6 +22,7 @@ import {
   COLLEGE_OUTLINE_TEMPLATE,
   scaleOutlineWords,
   DEFAULT_COLLEGE_FRONT_MATTER,
+  cleanTopicForTitle,
 } from "@/lib/collegeTemplate";
 
 export const MAX_CONTEXT = 40000;
@@ -127,6 +128,22 @@ export default function RunComposer({
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [topic, setTopic] = useState(initialDraft?.topic ?? "");
+  const [isTitleManuallyEdited, setIsTitleManuallyEdited] = useState<boolean>(() => {
+    const clean = cleanTopicForTitle(initialDraft?.topic ?? "");
+    const draftTitle = initialDraft?.front_matter?.projectTitle?.trim() ?? "";
+    if (draftTitle && clean && draftTitle !== clean) {
+      return true;
+    }
+    return false;
+  });
+  const [cachedCollegeFrontMatter, setCachedCollegeFrontMatter] = useState<CollegeFrontMatter>(() => {
+    const base = initialDraft?.front_matter ?? DEFAULT_COLLEGE_FRONT_MATTER;
+    const clean = cleanTopicForTitle(initialDraft?.topic ?? "");
+    if (!base.projectTitle && clean) {
+      return { ...base, projectTitle: clean };
+    }
+    return base;
+  });
   const [manual, setManual] = useState(initialDraft?.context ?? "");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [reportType, setReportType] = useState<ReportType>(initialType?.value ?? defaultReportType);
@@ -142,8 +159,16 @@ export default function RunComposer({
     return undefined;
   });
   const [frontMatter, setFrontMatter] = useState<CollegeFrontMatter | undefined>(() => {
-    if (initialDraft?.front_matter) return initialDraft.front_matter;
-    if (collegeParam) return DEFAULT_COLLEGE_FRONT_MATTER;
+    const clean = cleanTopicForTitle(initialDraft?.topic ?? "");
+    if (initialDraft?.front_matter) {
+      if (!initialDraft.front_matter.projectTitle && clean) {
+        return { ...initialDraft.front_matter, projectTitle: clean };
+      }
+      return initialDraft.front_matter;
+    }
+    if (collegeParam) {
+      return { ...DEFAULT_COLLEGE_FRONT_MATTER, projectTitle: clean };
+    }
     return undefined;
   });
   const [isCollegeActive, setIsCollegeActive] = useState<boolean>(() => {
@@ -152,21 +177,46 @@ export default function RunComposer({
   const [extracting, setExtracting] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
 
-  useEffect(() => {
-    if (searchParams.get("template") === "college" && !isCollegeActive) {
-      const scaled = scaleOutlineWords(COLLEGE_OUTLINE_TEMPLATE, targetWords);
-      setTemplateOutline(scaled);
-      setTemplateName("College project report");
-      setFrontMatter((prev) => prev ?? DEFAULT_COLLEGE_FRONT_MATTER);
-      setIsCollegeActive(true);
+  const handleTopicChange = (newTopic: string) => {
+    setTopic(newTopic);
+    const clean = cleanTopicForTitle(newTopic);
+    if (!isTitleManuallyEdited) {
+      setCachedCollegeFrontMatter((prev) => ({
+        ...prev,
+        projectTitle: clean,
+      }));
+      setFrontMatter((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          projectTitle: clean,
+        };
+      });
     }
-  }, [searchParams]);
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedLengthConfig = LENGTH_OPTIONS.find((l) => l.value === length) ?? LENGTH_OPTIONS[1];
   const targetWords = selectedLengthConfig.target;
   const hasTemplate = Boolean(templateOutline && templateOutline.length > 0);
+
+  useEffect(() => {
+    if (searchParams.get("template") === "college" && !isCollegeActive) {
+      const scaled = scaleOutlineWords(COLLEGE_OUTLINE_TEMPLATE, targetWords);
+      setTemplateOutline(scaled);
+      setTemplateName("College project report");
+      const clean = cleanTopicForTitle(topic);
+      setFrontMatter((prev) => {
+        const base = prev ?? cachedCollegeFrontMatter ?? DEFAULT_COLLEGE_FRONT_MATTER;
+        if (!isTitleManuallyEdited && clean) {
+          return { ...base, projectTitle: clean };
+        }
+        return base;
+      });
+      setIsCollegeActive(true);
+    }
+  }, [searchParams, targetWords, isCollegeActive, topic, isTitleManuallyEdited, cachedCollegeFrontMatter]);
 
   // Save draft state across steps / session
   useEffect(() => {
@@ -277,6 +327,9 @@ export default function RunComposer({
   ) => {
     setTemplateOutline(newOutline);
     setFrontMatter(newFrontMatter);
+    if (newFrontMatter) {
+      setCachedCollegeFrontMatter(newFrontMatter);
+    }
     setIsCollegeActive(isCollege);
     setTemplateName(name);
     if (!newOutline && searchParams.get("template") === "college") {
@@ -327,6 +380,9 @@ export default function RunComposer({
 
   const handleConfirm = () => {
     if (!topic.trim() || starting || isLimitReached) return;
+    const finalFrontMatter = isCollegeActive
+      ? (frontMatter ?? cachedCollegeFrontMatter)
+      : frontMatter;
     onStart({
       topic: topic.trim(),
       context: fullContext,
@@ -334,7 +390,7 @@ export default function RunComposer({
       length,
       targetWords,
       template_outline: templateOutline,
-      front_matter: frontMatter,
+      front_matter: finalFrontMatter,
     });
   };
 
@@ -417,7 +473,7 @@ export default function RunComposer({
                 autoFocus
                 type="text"
                 value={topic}
-                onChange={(e) => setTopic(e.target.value.slice(0, 300))}
+                onChange={(e) => handleTopicChange(e.target.value.slice(0, 300))}
                 placeholder="What should this report be about?"
                 maxLength={300}
                 className="h-11 w-full rounded-lg border border-line bg-surface px-4 text-sm text-fg placeholder:text-muted focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-ring"
@@ -582,9 +638,12 @@ export default function RunComposer({
           {/* Reference template (optional) panel: full width below with no leftover space */}
           <div className="w-full">
             <TemplatePanel
+              topic={topic}
+              isTitleManuallyEdited={isTitleManuallyEdited}
+              onTitleManualEditChange={setIsTitleManuallyEdited}
               targetTotalWords={targetWords}
               outline={templateOutline}
-              frontMatter={frontMatter}
+              frontMatter={frontMatter ?? (isCollegeActive ? cachedCollegeFrontMatter : undefined)}
               isCollegeChipActive={isCollegeActive}
               templateName={templateName}
               onUpdate={handleTemplateUpdate}
@@ -604,15 +663,7 @@ export default function RunComposer({
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  setLength("standard");
-                  setReportType("auto");
-                  setTemplateOutline(undefined);
-                  setFrontMatter(undefined);
-                  setIsCollegeActive(false);
-                  setTemplateName(undefined);
-                  setStep(3);
-                }}
+                onClick={() => setStep(3)}
                 className="text-xs font-medium text-muted hover:text-fg"
               >
                 Skip

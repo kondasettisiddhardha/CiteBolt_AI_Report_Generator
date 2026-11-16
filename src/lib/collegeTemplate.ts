@@ -22,6 +22,12 @@ export interface CollegeFrontMatter {
   university: string;
   academicYear: string;
   submissionMonthYear: string;
+  degree?: string;
+  teamSize?: string;
+  duration?: string;
+  deploymentStatus?: string;
+  databaseTables?: string;
+  mainEndpoints?: string;
 }
 
 export const DEFAULT_COLLEGE_FRONT_MATTER: CollegeFrontMatter = {
@@ -35,6 +41,12 @@ export const DEFAULT_COLLEGE_FRONT_MATTER: CollegeFrontMatter = {
   university: "",
   academicYear: "",
   submissionMonthYear: "",
+  degree: "",
+  teamSize: "",
+  duration: "",
+  deploymentStatus: "",
+  databaseTables: "",
+  mainEndpoints: "",
 };
 
 export const COLLEGE_OUTLINE_TEMPLATE: OutlineSection[] = [
@@ -50,8 +62,8 @@ export const COLLEGE_OUTLINE_TEMPLATE: OutlineSection[] = [
 
   // Chapter 1 Introduction (Total ~1,000 words)
   { level: 1, title: "Chapter 1 Introduction" },
-  { level: 2, title: "1.1 Overview of [Domain] Industry", target_words: 150 },
-  { level: 2, title: "1.2 Introduction to [Project] Platform", target_words: 150 },
+  { level: 2, title: "1.1 Overview of the Domain", target_words: 150 },
+  { level: 2, title: "1.2 Introduction to [Project]", target_words: 150 },
   { level: 2, title: "1.3 Problem Statement", target_words: 150 },
   { level: 2, title: "1.4 Objectives of the Project", target_words: 150 },
   { level: 2, title: "1.5 Scope of the System", target_words: 150 },
@@ -205,3 +217,9 @@ export function scaleOutlineWords(
     return { ...s, target_words: scaled };
   });
 }
+
+export function cleanTopicForTitle(topic?: string | null): string {
+  if (!topic) return "";
+  return topic.trim().replace(/\.+$/, "").trim();
+}
+
