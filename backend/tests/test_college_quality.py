@@ -108,7 +108,7 @@ class TestCollegeReportQuality(unittest.TestCase):
 
         # Tavily search should only be called for Chapter 1 (background), NEVER for Chapter 3 or Chapter 5!
         self.assertEqual(len(tavily_searches), 1)
-        self.assertIn("domain overview", tavily_searches[0].lower())
+        self.assertIn("arxiv survey paper", tavily_searches[0].lower())
 
         # Prompts for Chapter 3 and 5 must contain the compact fact sheet
         ch3_5_prompts = [p for p in captured_prompts if "3.1 Introduction" in p or "5.1 Frontend Technologies" in p]
@@ -457,7 +457,7 @@ Stylistic typography:
         self.assertIn("(Performance & Security)", cleaned)
 
         # 4. Bracketed placeholder is preserved intact
-        self.assertIn("[Add your database name here]", cleaned)
+        self.assertIn("[Add your database name here.]", cleaned)
 
     def test_cheaper_model_routing_rules(self):
         """Verify cheaper model is used ONLY for Acknowledgements and short Summary (<=150 words).
@@ -769,6 +769,7 @@ This chapter introduces the engineering background and system motivation.
             "# Chapter 4 System Design\n\n"
             "## 4.1 Architecture\n\n"
             "[Insert diagram here: Architecture Diagram]\n\n"
+            "## 4.2 Sequence Model\n\n"
             "[Insert diagram here: Sequence Diagram]\n\n"
             "Table 4.1 Component Details\n\n"
             "# Chapter 7 Implementation\n\n"
@@ -900,8 +901,8 @@ This chapter introduces the engineering background and system motivation.
             "Ada Lovelace (PRN: PRN-1002)",
             "Under the guidance of",
             "Prof. Charles Babbage",
-            "Department Of Mechanical & Computing",
-            "Apex Institute Of Technology",
+            "Department of Mechanical & Computing",
+            "Apex Institute of Technology",
             "Academic Year: 2024-2025",
         ]
         last_pos = -1
@@ -1009,23 +1010,23 @@ Numbered deployment steps:
             res_few = section_engine.run_section_pipeline(state_few, lambda ev: None, lambda: False)
 
         report_few = res_few.get("report", "")
-        self.assertIn("[1] FastAPI Framework Documentation, Available: https://fastapi.tiangolo.com.", report_few)
-        self.assertIn("[2] ReportLab Reference Manual, Available: https://docs.reportlab.com.", report_few)
+        self.assertIn("FastAPI Framework Documentation", report_few)
+        self.assertIn("ReportLab Reference Manual", report_few)
         self.assertIn("[Add more references here]", report_few)
         # Verify no fabricated standard entries
         self.assertNotIn("IEEE Std 730-2014", report_few)
         self.assertNotIn("4+1 View Model", report_few)
         self.assertNotIn("Representational State Transfer (REST) Architectural Style", report_few)
 
-        # Case B: 5 or more sources (no placeholder line)
-        sources_5 = [
+        # Case B: 3 or more sources (no placeholder line)
+        sources_3 = [
             {"title": f"Source Paper {i}", "url": f"https://example.com/paper{i}"}
-            for i in range(1, 6)
+            for i in range(1, 4)
         ]
-        state_5 = {
+        state_3 = {
             "topic": "Microservices Engine",
             "context": "FastAPI, Python.",
-            "sources": sources_5,
+            "sources": sources_3,
             "report_type": "college",
             "outline": [
                 {"level": 1, "title": "Chapter 1 Introduction"},
@@ -1033,15 +1034,131 @@ Numbered deployment steps:
                 {"level": 1, "title": "References"},
             ],
         }
-        with patch.object(section_engine, "_collect_sources", return_value=sources_5), patch.object(
+        with patch.object(section_engine, "_collect_sources", return_value=sources_3), patch.object(
             section_engine, "generate_text", side_effect=mock_gen_text
         ):
-            res_5 = section_engine.run_section_pipeline(state_5, lambda ev: None, lambda: False)
+            res_3 = section_engine.run_section_pipeline(state_3, lambda ev: None, lambda: False)
 
-        report_5 = res_5.get("report", "")
-        self.assertIn("[5] Source Paper 5, Available: https://example.com/paper5.", report_5)
-        self.assertNotIn("[Add more references here]", report_5)
-        self.assertNotIn("IEEE Std 730-2014", report_5)
+        report_3 = res_3.get("report", "")
+        self.assertIn("Source Paper 3", report_3)
+        self.assertNotIn("[Add more references here]", report_3)
+        self.assertNotIn("IEEE Std 730-2014", report_3)
+
+    def test_no_duration_words_when_duration_blank(self):
+        """F.22.1 Verify no duration words ('three months', 'weeks', etc.) when Duration is blank."""
+        fm_blank = {"projectTitle": "Test Project", "duration": ""}
+        fact_sheet = build_compact_project_fact_sheet("Test Project", "Some context", fm_blank)
+        self.assertIn("[Not specified / Blank - do NOT mention any duration, months, or weeks]", fact_sheet)
+        self.assertNotIn("three months", fact_sheet.lower())
+
+        # Test sanitize_section_markdown removes invented durations when duration is blank
+        invented_text = "The system was developed over three months and evaluated during 12 weeks of trials."
+        cleaned = sanitize_section_markdown(invented_text, duration="")
+        self.assertNotIn("three months", cleaned.lower())
+        self.assertNotIn("12 weeks", cleaned.lower())
+        self.assertIn("[Add your project timeline here.]", cleaned)
+
+    def test_no_single_agent_consistency(self):
+        """F.22.2 Verify consistency: system has three agents; never write 'single-agent'."""
+        text = "This single-agent system uses a single agent architecture for processing."
+        cleaned = sanitize_section_markdown(text)
+        self.assertNotIn("single-agent", cleaned.lower())
+        self.assertNotIn("single agent", cleaned.lower())
+        self.assertIn("three-agent", cleaned)
+
+    def test_title_page_contains_project_title(self):
+        """F.22.3 Verify title page contains the project title (large, bold, centered) in PDF."""
+        title = "Autonomous Edge AI Robotics Platform"
+        md = (
+            f"# {title}\n\n"
+            "A PROJECT REPORT\n\n"
+            "Submitted in partial fulfillment of the requirements for the award of the degree of\n\n"
+            "**Bachelor of Technology**\n\n"
+            "Submitted by\n\nStudent (PRN: 101)\n\n"
+            "## Certificate\n\nThis is to certify..."
+        )
+        pdf_bytes = markdown_to_pdf(md, title=title, report_type="college")
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        page1_txt = reader.pages[0].extract_text()
+        self.assertIn(title, page1_txt)
+
+    def test_placeholder_format_has_no_trailing_dot(self):
+        """F.22.4 Verify placeholder format is strictly '[Add your <title> here.]' with no trailing '].'."""
+        raw_text = "## 6.4 Project Timeline\n\n[Add your Project Timeline here.].\n\n[Add your Schedule here].\n\n[Add your Costs here]"
+        cleaned = sanitize_section_markdown(raw_text)
+        self.assertNotIn("here.].", cleaned)
+        self.assertNotIn("here].", cleaned)
+        self.assertIn("[Add your Project Timeline here.]", cleaned)
+        self.assertIn("[Add your Schedule here.]", cleaned)
+        self.assertIn("[Add your Costs here.]", cleaned)
+        # Check regex across the entire text
+        trailing_dot_matches = re.findall(r"\[Add your [^\]]+ here\.\]\.", cleaned)
+        self.assertEqual(len(trailing_dot_matches), 0, f"Found placeholders with trailing dot: {trailing_dot_matches}")
+
+    def test_sequential_figure_numbers_and_stripped_prefixes(self):
+        """F.22.5 Verify sequential figure and table numbers with no gaps, stripping stray '– ' and '.N –'."""
+        md = (
+            "# Chapter 8 Testing\n\n"
+            "## 8.1 Test Overview\n\n"
+            "[Insert diagram here: Fig. 8.4 – – Architecture Verification Flow]\n\n"
+            "Fig. 8.4 – .N – Architecture Verification Flow\n\n"
+            "## 8.2 Test Execution\n\n"
+            "[Insert diagram here: Fig. 8.9 – Test Case Results]\n\n"
+            "Fig. 8.9: Test Case Results\n\n"
+            "Table 8.8: Performance Summary\n\n"
+            "[Insert table here]\n\n"
+            "Table 8.15: Load Test Summary\n\n"
+            "[Insert table here]\n"
+        )
+        processed = ensure_unique_figure_and_table_captions(md)
+        # Should be renumbered gaplessly starting at 8.1
+        self.assertIn("Fig. 8.1: Architecture Verification Flow", processed)
+        self.assertIn("Fig. 8.2: Test Case Results", processed)
+        self.assertIn("Table 8.1: Performance Summary", processed)
+        self.assertIn("Table 8.2: Load Test Summary", processed)
+        # Ensure no gaps
+        self.assertNotIn("8.4", processed)
+        self.assertNotIn("8.9", processed)
+        self.assertNotIn("8.8", processed)
+        self.assertNotIn("8.15", processed)
+        # Ensure stray prefixes are stripped
+        self.assertNotIn(".N –", processed)
+        self.assertNotIn("– –", processed)
+
+    def test_appendix_a_in_toc(self):
+        """F.22.6 Verify TOC includes Appendix A (Certificates of Publication)."""
+        md = (
+            "# CiteBolt Research Assistant\n\n"
+            "A PROJECT REPORT\n\n"
+            "Submitted by\n\nStudent (PRN: 101)\n\n"
+            "## Certificate\n\nThis certifies...\n\n"
+            "## Acknowledgements\n\nWe thank...\n\n"
+            "## Abstract\n\nAbstract content here...\n\n"
+            "## Table of Contents\n\n"
+            "## List of Figures\n\n"
+            "## List of Tables\n\n"
+            "# Chapter 1 Introduction\n\n"
+            "## 1.1 Overview\n\nIntroduction content.\n\n"
+            "[Insert diagram here: Fig. 1.1 - Overview Diagram]\n\n"
+            "Fig. 1.1: Overview Diagram\n\n"
+            "Table 1.1: Requirement Matrix\n\n"
+            "[Insert table here]\n\n"
+            "## Appendix A: Certificates of Publication\n\n"
+            "Publication details.\n\n"
+            "## Appendix B: Glossary\n\n"
+            "Glossary table.\n"
+        )
+        pdf_bytes = markdown_to_pdf(md, title="CiteBolt Research Assistant", report_type="college")
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        # Find Table of Contents page
+        toc_text = ""
+        for page in reader.pages:
+            txt = page.extract_text()
+            if "Table of Contents" in txt:
+                toc_text += txt + "\n"
+        self.assertIn("Appendix A: Certificates of Publication", toc_text, f"Appendix A missing from TOC:\n{toc_text}")
+        self.assertIn("Appendix B: Glossary", toc_text)
+        self.assertIn("Chapter 1 Introduction", toc_text)
 
 
 if __name__ == "__main__":

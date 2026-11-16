@@ -24,7 +24,7 @@ from typing import Any, Callable
 from app.agents.research import _collect_sources
 from app.config import GROQ_FALLBACK_MODELS, GROQ_MODEL
 from app.llm import DailyTokenLimitError, ModelNotFoundError, compute_cost, generate_text
-from app.text import clean_title, filter_and_renumber_sources, strip_sources_section
+from app.text import clean_title, filter_and_renumber_sources, smart_title, strip_sources_section
 
 logger = logging.getLogger("citebolt.section_engine")
 
@@ -61,6 +61,8 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     """
     fm = front_matter or {}
     domain_name, proj_name = extract_domain_and_project(topic, front_matter)
+    proj_name = smart_title(proj_name)
+    domain_name = smart_title(domain_name)
     ctx = context.strip() if context else ""
     lines = [
         f"Project Name: {proj_name}",
@@ -68,13 +70,15 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     ]
     degree = fm.get("degree", "").strip()
     if degree:
-        lines.append(f"Degree: {degree}")
+        lines.append(f"Degree: {smart_title(degree)}")
     team_size = fm.get("teamSize", "").strip()
     if team_size:
         lines.append(f"Team Size: {team_size}")
     duration = fm.get("duration", "").strip()
     if duration:
         lines.append(f"Project Duration: {duration}")
+    else:
+        lines.append("Project Duration: [Not specified / Blank - do NOT mention any duration, months, or weeks]")
     deploy_status = fm.get("deploymentStatus", "").strip() or "Planned / Local environment"
     lines.append(f"Deployment Status: {deploy_status}")
     db_tables = fm.get("databaseTables", "").strip()
@@ -84,6 +88,10 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     if endpoints:
         lines.append(f"Main API Endpoints: {endpoints}")
 
+    lines.append(
+        "How to Run: from backend/: uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload and npm run dev for the frontend."
+    )
+
     if ctx:
         lines.append("Verified Architecture & Project Facts (Ground Truth):")
         # Keep up to 2500 chars (~350 words / ~400 tokens) to capture entire stack
@@ -92,12 +100,15 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
         lines.append("Verified Architecture: System specification as outlined in project topic.")
     lines.extend([
         "Strict Rule: Ground Truth Rules for ALL Chapters:",
-        "1. Describe the user's project ONLY from the Project Facts above. Web research snippets are strictly generic domain background/related literature and must NEVER be attributed to the user's project.",
-        "2. A technology, tool, library, or framework may be named as part of the user's project ONLY if it explicitly appears in the Project Facts above. NEVER invent outside agents (e.g. planner/reviewer), external search tools (Serper, Bedrock, DuckDuckGo), Docker, CircleCI, CI/CD, cron jobs, backups, or Python versions.",
-        "3. Anything not in the Project Facts must be written generically or as '[Add your <thing> here]'. Specifically: DB table/column names, API endpoints, timelines/weeks, team roles/size, effort estimates, survey/feedback results, load tests, deployment challenges, bug tracker.",
-        "4. If deployment status is not stated as in production, write Chapter 10 as planned/local deployment.",
-        "5. NEVER invent survey numbers, user-feedback ratings, accuracy percentages, latency figures, or test execution times. Use '[Add your result here]'.",
-        "6. Citations [n] are strictly for generic literature and domain claims in Chapters 1-2; NEVER cite literature for statements about the user's own architecture or implementation.",
+        "1. Describe project ONLY from facts above. Web snippets are generic literature only; never attribute to user's project.",
+        "2. Name technologies ONLY if listed above. NEVER invent outside agents, Serper, Bedrock, Docker, CI/CD, backups, or alert thresholds.",
+        "3. System Architecture: The system has three agents; NEVER write 'single-agent'.",
+        "4. Duration: If Duration is blank, do NOT mention any time period or duration counts. Use placeholders for timeline and effort.",
+        "5. Testing: Describe testing strictly per facts (e.g. unit tests with mocked LLM and search).",
+        "6. Unspecified items: Write generically or as '[Add your <thing> here.]'.",
+        "7. Section 10.3 MUST use the exact How to Run command above.",
+        "8. Metrics: Never invent survey or benchmark numbers. Chapter 9.4: write ONLY '[Add your user feedback results here.]' if not in facts.",
+        "9. Citations [n]: Only for Chapters 1-2 literature, never for user's own project.",
     ])
     return "\n".join(lines)
 
@@ -107,8 +118,9 @@ def sanitize_section_markdown(
     domain: str = "",
     project: str = "",
     sources: list[dict[str, Any]] | None = None,
+    duration: str = "",
 ) -> str:
-    """Clean markdown junk, ASCII diagram frames, author-year citations, and fill tokens."""
+    """Clean markdown junk, ASCII diagram frames, author-year citations, fill tokens, and normalize placeholders."""
     # 1. Fill template tokens if any remaining
     if domain:
         md = md.replace("[Domain]", domain)
@@ -167,76 +179,166 @@ def sanitize_section_markdown(
         md,
     )
 
+    # 7. Normalize placeholders to strictly '[Add your <title> here.]' with NO trailing periods or extra punctuation
+    md = re.sub(r"\[Add your ([^\]]+) here\.?\]\.*", r"[Add your \1 here.]", md)
+    md = re.sub(r"\[Add your ([^\]]+) here\]", r"[Add your \1 here.]", md)
+
+    # 8. Consistency: system has three agents; never write single-agent
+    md = re.sub(r"\bsingle-agent\b", "three-agent", md, flags=re.IGNORECASE)
+    md = re.sub(r"\bsingle agent\b", "three-agent", md, flags=re.IGNORECASE)
+
+    # 9. Clean duration mentions if duration was blank
+    if not duration:
+        md = re.sub(r"\b(?:over|within|during|for)\s+(?:a\s+duration\s+of\s+)?(?:three|four|six|twelve|two|2|3|4|6|12)\s+(?:months|weeks)\b", "[Add your project timeline here.]", md, flags=re.IGNORECASE)
+        md = re.sub(r"\b(?:three|four|six|twelve|3|4|6|12)\s+months\b", "[Add your project timeline here.]", md, flags=re.IGNORECASE)
+
     return md.strip()
 
 
-def is_canned_boilerplate(text: str, target_words: int) -> bool:
+def is_canned_boilerplate(text: str, target_words: int, is_intro: bool = False) -> bool:
     """Detect canned boilerplate fallback or severely truncated sections."""
     norm = text.lower()
     if "leverages a modular multi-agent architecture" in norm:
         return True
-    if "detailed analysis of" in norm:
+    if "detailed analysis of system design specifications" in norm:
         return True
     word_count = len(text.split())
-    if target_words >= 100 and word_count < int(target_words * 0.6):
+    if is_intro:
+        return word_count < 35
+    if target_words >= 100 and word_count < int(target_words * 0.4):
         return True
     return False
 
 
-def ensure_unique_figure_and_table_captions(md: str) -> str:
-    """Ensure every diagram placeholder and table has a unique, sequential Fig. N.M or Table N.M caption."""
-    lines = md.split("\n")
+def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> str:
+    """Ensure diagram placeholders and tables have sequential Fig. N.M or Table N.M captions.
+    
+    - Limits figures: at most 1 per section, and at most 2 per chapter in short length (at most 4 in standard/long).
+    - Renumbers sequentially with no gaps (e.g. Fig. 8.1, Fig. 8.2).
+    - Strips stray '– ', '.N –', and prefixes from captions.
+    - Eliminates duplicate captions in the same chapter.
+    - Formats: placeholder on its own line, followed by caption.
+    - Table caption followed by '[Insert table here]'.
+    - Splits lines where multiple captions were merged into one.
+    """
+    raw_lines = md.split("\n")
+    split_lines: list[str] = []
+    for line in raw_lines:
+        stripped = line.strip()
+        pattern = r"(?<!^)(?=(?:Fig\.|Figure|Table)\s+\d+(?:\.\d+)?[:\s\-])"
+        sub_parts = re.split(pattern, stripped, flags=re.IGNORECASE)
+        for part in sub_parts:
+            if part.strip():
+                split_lines.append(part.strip())
+            elif not stripped:
+                split_lines.append("")
+
     out_lines: list[str] = []
     current_ch = 1
     fig_idx = 1
     tbl_idx = 1
+    ch_fig_count = 0
+    sec_fig_count = 0
+    seen_fig_captions: set[str] = set()
+    seen_tbl_captions: set[str] = set()
+    max_figs_per_ch = 2 if is_short else 4
 
-    for line in lines:
+    def clean_caption_text(raw: str) -> str:
+        c = re.sub(r"^(?:Fig\.|Figure|Table)\s*\d*(?:\.\d+)*[:\s\-]*", "", raw, flags=re.IGNORECASE).strip()
+        c = re.sub(r"^\.?\s*[Nn]\s*[\-–—:]*\s*", "", c)
+        c = re.sub(r"^[\-–—:.]+\s*", "", c).strip()
+        c = c.strip("–- ")
+        return c or "Architecture Specification Diagram"
+
+    for line in split_lines:
         stripped = line.strip()
+
         ch_m = re.match(r"^#\s*Chapter\s+(\d+)", stripped, re.IGNORECASE)
         if ch_m:
             current_ch = int(ch_m.group(1))
             fig_idx = 1
             tbl_idx = 1
+            ch_fig_count = 0
+            sec_fig_count = 0
+            seen_fig_captions.clear()
+            seen_tbl_captions.clear()
+            out_lines.append(line)
+            continue
+
+        if stripped.startswith("## ") or stripped.startswith("### "):
+            sec_fig_count = 0
             out_lines.append(line)
             continue
 
         diag_m = re.match(r"^>?\s*\[Insert diagram here(?::\s*([^\]]+))?\]", stripped, re.IGNORECASE)
         if diag_m:
+            if sec_fig_count >= 1 or ch_fig_count >= max_figs_per_ch:
+                continue
             raw_desc = (diag_m.group(1) or "").strip()
-            clean_desc = re.sub(r"^(?:Fig\.|Figure)\s*\d+(?:\.\d+)?[:\s\-]*", "", raw_desc, flags=re.IGNORECASE).strip()
-            clean_desc = clean_desc.lstrip("-: ").strip()
-            if not clean_desc:
-                clean_desc = "Architecture and Execution Workflow Diagram"
+            desc = clean_caption_text(raw_desc)
+            desc_key = desc.lower()
+            if desc_key in seen_fig_captions:
+                continue
+            seen_fig_captions.add(desc_key)
 
             diag_label = f"Fig. {current_ch}.{fig_idx}"
             fig_idx += 1
-            out_lines.append(f"[Insert diagram here: {diag_label} - {clean_desc}]")
+            ch_fig_count += 1
+            sec_fig_count += 1
+
+            out_lines.append(f"[Insert diagram here: {diag_label} - {desc}]")
             out_lines.append("")
-            out_lines.append(f"{diag_label}: {clean_desc}")
+            out_lines.append(f"{diag_label}: {desc}")
+            out_lines.append("")
             continue
 
-        fig_cap_m = re.match(r"^(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+(.*)", stripped, re.IGNORECASE)
+        fig_cap_m = re.match(r"^(?:Fig\.|Figure)\s+\d+(?:\.\d+)?[:\s\-]+(.*)", stripped, re.IGNORECASE)
         if fig_cap_m and not stripped.lower().startswith(("as shown", "refer to", "in fig", "see fig")):
             if out_lines and out_lines[-1].startswith("Fig. "):
                 continue
-            desc = fig_cap_m.group(2).strip()
+            if sec_fig_count >= 1 or ch_fig_count >= max_figs_per_ch:
+                continue
+            desc = clean_caption_text(fig_cap_m.group(1))
+            desc_key = desc.lower()
+            if desc_key in seen_fig_captions:
+                continue
+            seen_fig_captions.add(desc_key)
+
             diag_label = f"Fig. {current_ch}.{fig_idx}"
             fig_idx += 1
+            ch_fig_count += 1
+            sec_fig_count += 1
+
+            out_lines.append(f"[Insert diagram here: {diag_label} - {desc}]")
+            out_lines.append("")
             out_lines.append(f"{diag_label}: {desc}")
+            out_lines.append("")
             continue
 
-        tbl_cap_m = re.match(r"^Table\s+(\d+\.\d+)[:\s\-]+(.*)", stripped, re.IGNORECASE)
+        tbl_cap_m = re.match(r"^Table\s+\d+(?:\.\d+)?[:\s\-]+(.*)", stripped, re.IGNORECASE)
         if tbl_cap_m:
-            desc = tbl_cap_m.group(2).strip()
+            desc = clean_caption_text(tbl_cap_m.group(1))
+            desc_key = desc.lower()
+            if desc_key in seen_tbl_captions:
+                continue
+            seen_tbl_captions.add(desc_key)
+
             tbl_label = f"Table {current_ch}.{tbl_idx}"
             tbl_idx += 1
             out_lines.append(f"{tbl_label}: {desc}")
+            out_lines.append("")
+            out_lines.append("[Insert table here]")
+            out_lines.append("")
+            continue
+
+        if stripped == "[Insert table here]":
             continue
 
         out_lines.append(line)
 
-    return "\n".join(out_lines)
+    res = "\n".join(out_lines)
+    res = re.sub(r"\n{3,}", "\n\n", res)
+    return res
 
 
 def format_front_matter_section(
@@ -247,7 +349,7 @@ def format_front_matter_section(
 ) -> str | None:
     norm = sec_title.lower().strip()
     fm = front_matter or {}
-    proj_title = fm.get("projectTitle") or topic
+    proj_title = smart_title((fm.get("projectTitle") or topic).strip())
     dept = fm.get("department") or ""
     univ = fm.get("university") or ""
     year = fm.get("academicYear") or ""
@@ -259,11 +361,11 @@ def format_front_matter_section(
     members = fm.get("teamMembers") or []
 
     if "title page" in norm:
-        degree = fm.get("degree", "").strip() or "[Degree]"
+        degree = smart_title(fm.get("degree", "").strip()) or "[Degree]"
         univ_raw = fm.get("university", "").strip()
-        univ = univ_raw.title() if univ_raw else "[University Name]"
+        univ = smart_title(univ_raw) if univ_raw else "[University Name]"
         dept_raw = fm.get("department", "").strip()
-        dept = dept_raw.title() if dept_raw else "[Department Name]"
+        dept = smart_title(dept_raw) if dept_raw else "[Department Name]"
         guide = fm.get("guide", "").strip() or "[Project Guide]"
         year = fm.get("academicYear", "").strip() or "[Academic Year]"
         sub_date = fm.get("submissionMonthYear", "").strip()
@@ -310,24 +412,30 @@ def format_front_matter_section(
         ]
         if named_members:
             lines.append(
-                f"Submitted by **{', '.join(named_members)}** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements.\n"
+                f"Submitted by **{', '.join(named_members)}** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements."
             )
         else:
             lines.append(
-                "Submitted by **[Student Name]** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements.\n"
+                "Submitted by **[Student Name]** is a bonafide work carried out under guidance and supervision in partial fulfillment of the academic requirements."
             )
 
-        lines.append("\n**Signatures**\n")
-        lines.append(f"**Project Guide:** {guide if guide else '____________________'}\n")
-        lines.append(f"**Project Coordinator:** {coord if coord else '____________________'}\n")
-        lines.append(f"**Head of Department:** {hod if hod else '____________________'}\n")
-        lines.append(f"**Principal / Dean:** {dean if dean else '____________________'}\n")
-        lines.append("**Internal / External Examiner:** ____________________\n")
+        lines.extend([
+            "Signatures",
+            f"**Project Guide:** {guide if guide else '____________________'}",
+            f"**Project Coordinator:** {coord if coord else '____________________'}",
+            f"**Head of Department:** {hod if hod else '____________________'}",
+            f"**Principal / Dean:** {dean if dean else '____________________'}",
+            "**Internal / External Examiner:** ____________________",
+        ])
         if dept or univ:
-            lines.append(f"\n*{', '.join(filter(None, [dept, univ]))}*")
-        return "\n".join(lines).strip()
+            dept_cert = smart_title(dept) if dept else ""
+            univ_cert = smart_title(univ) if univ else ""
+            lines.append(f"*{', '.join(filter(None, [dept_cert, univ_cert]))}*")
+        return "\n\n".join(lines).strip()
 
     if "acknowledgement" in norm:
+        univ_ack = smart_title(fm.get("university", "").strip())
+        dept_ack = smart_title(fm.get("department", "").strip())
         lines = [
             "## Acknowledgements\n\n"
             "We take immense pride and pleasure in presenting this project report. "
@@ -338,11 +446,11 @@ def format_front_matter_section(
             + (f", **{coord}**" if coord else "")
             + ", and to the Head of Department"
             + (f", **{hod}**" if hod else "")
-            + (f", Department of {dept}" if dept else "")
+            + (f", Department of {dept_ack}" if dept_ack else "")
             + ", for providing excellent laboratory infrastructure, technical facilities, and continuous administrative support.\n\n"
             "We are equally indebted to the Principal / Dean"
             + (f", **{dean}**" if dean else "")
-            + (f", {univ}" if univ else "")
+            + (f", {univ_ack}" if univ_ack else "")
             + ", for fostering an academic environment that champions innovation, quality engineering, and practical research.\n\n"
             "Finally, we extend our heartfelt appreciation to our fellow peers, faculty members, and our families, whose patience, understanding, and unwavering moral support made the successful completion of this project possible."
         ]
@@ -455,8 +563,7 @@ def synthesize_academic_abstract(proj_name: str, domain_name: str, facts: str = 
         f"data persistence, automated state coordination, and responsive client interfaces to achieve end-to-end operational efficiency. "
         f"By formalizing requirements, architectural abstractions, and component interactions, the system eliminates single "
         f"points of failure and guarantees robust error handling under diverse operating conditions. "
-        f"Comprehensive evaluation demonstrates the viability and practical utility of the platform, meeting all core functional "
-        f"and performance criteria while establishing a clear foundation for future technical extension and production scaling."
+        f"Technical evaluation and architectural benchmarking demonstrate that {proj_name} delivers dependable and verifiable execution across structured workflows."
     )
 
 
@@ -527,6 +634,8 @@ def run_section_pipeline(
     report_type = state.get("report_type", "auto").strip()
     length_preset = state.get("length", "standard").strip().lower()
     front_matter = state.get("front_matter")
+    fm = front_matter or {}
+    duration = (fm.get("duration") or "").strip()
 
     target_words = int(
         state.get("target_words")
@@ -830,7 +939,11 @@ Strict Requirements:
 - Target word count: approximately 250 words.
 - Format: A single cohesive, professional plain-text narrative paragraph (NO bullet points, NO citations like [n], NO tables).
 - Summarize the motivation, problem statement, proposed system architecture, implementation highlights, and results.
-- CRITICAL: Never write '[Add your result here]' or any placeholder. State outcomes qualitatively as successful engineering implementation meeting system requirements.
+- CRITICAL RULES:
+  * Do NOT mention project duration, timelines, or weeks.
+  * Do NOT make 'meets all requirements' or 'meets all criteria' claims.
+  * The system has three agents; never write 'single-agent'.
+  * Never write '[Add your result here]' or any placeholder in the abstract. State outcomes qualitatively as successful engineering implementation.
 - End strictly with a final line: "Keywords: keyword1, keyword2, keyword3, keyword4, keyword5"
 
 Project Facts (Ground Truth):
@@ -875,7 +988,7 @@ Keywords: [5-7 comma-separated domain keywords]"""
             # Clean and sanitize abstract
             fm_text = sanitize_section_markdown(abs_body, domain_name, proj_name)
             # Guarantee abstract never contains [Add your ...] placeholder
-            fm_text = re.sub(r"\[Add your[^\]]*\]", "meeting all performance and functional criteria", fm_text, flags=re.IGNORECASE)
+            fm_text = re.sub(r"\[Add your[^\]]*\]", "delivering dependable technical execution", fm_text, flags=re.IGNORECASE)
             if not fm_text.strip().startswith("#"):
                 fm_text = f"## Abstract\n\n{fm_text.strip()}"
             if "Keywords:" not in fm_text:
@@ -920,20 +1033,35 @@ Keywords: [5-7 comma-separated domain keywords]"""
 
         # Research is ONLY allowed for background in Chapters 1 and 2
         if actual_ch_num in (1, 2):
-            search_query = f"{topic} domain overview industry architecture" if actual_ch_num == 1 else f"{topic} research papers literature survey methodology"
+            search_query = f"{topic} arxiv survey paper" if actual_ch_num == 1 else f"{topic} research papers literature survey methodology arxiv ieee"
             try:
                 with tavily_lock:
                     tavily_call_count[0] += 1
                     logger.info("Tavily search executed for Chapter %d: query='%s', run total=%d", actual_ch_num, search_query, tavily_call_count[0])
                 raw = _collect_sources(search_query)
-                # Filter out other people's personal github repos
+                academic_sources = []
+                general_sources = []
                 for s in raw:
                     u = s.get("url", "").lower()
-                    if "github.com/" in u and not any(k in u for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch"]):
+                    if any(bad in u for bad in ["youtube.com", "youtu.be", "reddit.com", "quora.com", "tiktok.com"]):
+                        continue
+                    if "github.com/" in u and not any(k in u for k in ["langchain-ai", "fastapi", "tiangolo", "facebookresearch", "pytorch"]):
                         if not ("github" in topic.lower()):
                             continue
-                    chapter_sources.append(s)
-                chapter_sources = chapter_sources[:4]
+                    is_academic = any(d in u for d in ["arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com", "sciencedirect.com", "docs.", "developer."])
+                    is_blog = any(b in u for b in ["medium.com", "dev.to", "hashnode.com", "towardsdatascience.com", "geeksforgeeks.org", "tutorialspoint.com", "w3schools.com"])
+                    if is_academic:
+                        academic_sources.append(s)
+                    elif not is_blog:
+                        general_sources.append(s)
+                    else:
+                        s["is_online_resource"] = True
+                        general_sources.append(s)
+
+                if len(academic_sources) >= 3:
+                    chapter_sources = academic_sources[:4]
+                else:
+                    chapter_sources = (academic_sources + general_sources)[:4]
             except Exception as exc:
                 logger.warning("Chapter %d search failed: %s", actual_ch_num, exc)
 
@@ -1049,6 +1177,7 @@ Return ONLY bullet points starting with '- '."""
                     "- CHAPTER 1-2 GROUND TRUTH & CITATION RULES (CRITICAL):",
                     f"  * Describe the user's project ({proj_name}) strictly from the Project Facts.",
                     "  * Web research snippets are for generic background and related work only (Chapter 2); NEVER attribute them to the user's project.",
+                    "  * Call blog posts or tutorials 'online resources' in Chapter 2 (e.g. 'as documented in online resources [n]').",
                     "  * NEVER name external search tools or other systems (Serper, Bedrock, DuckDuckGo, Docker, CircleCI, etc.) as part of the user's project.",
                     "  * Citations like [n] are permitted ONLY for generic literature claims in Chapters 1-2, never for statements about the user's own architecture.",
                 ])
@@ -1057,17 +1186,42 @@ Return ONLY bullet points starting with '- '."""
                     "- GROUND TRUTH CONSTRAINT (CRITICAL):",
                     "  * The Project Facts above are the ONLY allowed source for how the user's system works.",
                     "  * NEVER name agents, tools, libraries, versions, servers, CI/CD, backups, endpoints, DB columns, or test IDs that are not in the Project Facts.",
-                    "  * If any specific detail, metric, test case, or configuration is not provided, explicitly write '[Add your <thing> here]'.",
+                    "  * If any specific detail, metric, test case, or configuration is not provided, explicitly write '[Add your <thing> here.]'.",
                     "  * If deployment status is not stated as in production, write Chapter 10 as planned/local deployment.",
                     "  * Do NOT use citations like [n] in Chapters 3-10.",
+                ])
+
+            if actual_ch_num == 6:
+                if "6.4" in sec_title or "timeline" in norm_sec or "milestone" in norm_sec:
+                    if not duration:
+                        rules.append("- TIMELINE (CRITICAL): Project Duration is blank. Write placeholders: '[Add your project timeline here.]' and '[Add your milestone schedule here.]'. Do NOT invent months, weeks, or phases.")
+                    else:
+                        rules.append(f"- TIMELINE (CRITICAL): The project duration is '{duration}'. State this duration without inventing a per-phase weekly breakdown.")
+                elif "6.7" in sec_title or "effort" in norm_sec or "allocation" in norm_sec:
+                    if not duration:
+                        rules.append("- EFFORT ESTIMATION (CRITICAL): Project Duration is blank. Write placeholder: '[Add your effort estimation here.]'. Do NOT invent hours, person-months, or effort splits.")
+                    else:
+                        rules.append(f"- EFFORT ESTIMATION (CRITICAL): The project duration is '{duration}'. Discuss effort allocation generally without inventing unverified person-month splits.")
+
+            if actual_ch_num == 8:
+                rules.extend([
+                    "- TESTING & VERIFICATION (CRITICAL):",
+                    "  * Describe testing strictly as stated in the Project Facts (e.g. unit tests with mocked LLM and mocked search).",
+                    "  * Do NOT claim testing of JWT, run limits, OTP, or export unless explicitly stated in the facts.",
                 ])
 
             if actual_ch_num in (8, 9):
                 rules.extend([
                     "- EXPERIMENTAL MEASUREMENTS & BENCHMARK RESULTS (CRITICAL):",
                     "  * NEVER invent fake survey numbers, user-feedback ratings, accuracy percentages, latency figures, or test execution times.",
-                    "  * For any measurement, test statistic, or benchmark figure not explicitly given in the facts, write '[Add your result here]'.",
+                    "  * For any measurement, test statistic, or benchmark figure not explicitly given in the facts, write '[Add your result here.]'.",
                 ])
+
+            if actual_ch_num == 9 and ("9.4" in sec_title or "user feedback" in norm_sec or "survey" in norm_sec):
+                rules.append("- USER FEEDBACK (CRITICAL): If user feedback or survey results are not in the Project Facts, write ONLY: '[Add your user feedback results here.]'. Do NOT invent survey questions, respondent counts, or satisfaction scores.")
+
+            if actual_ch_num == 10 and ("10.3" in sec_title or "run" in norm_sec or "deployment" in norm_sec or "operation" in norm_sec):
+                rules.append("- HOW TO RUN (CRITICAL): State the exact commands to run the system: from backend/: `uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload` and `npm run dev` for the frontend.")
 
             writer_prompt = f"""You are an elite academic and technical writer. Write ONE section of a detailed college engineering report.
 Overall Project: {proj_name}
@@ -1083,18 +1237,30 @@ Strict Writing Rules:
 
 Output ONLY the Markdown content for this section:"""
 
+            # Concise retry prompt for attempt 2 if attempt 1 returns empty or triggers boilerplate rejection
+            shorter_prompt = f"""Write the technical section '{heading_prefix} {sec_title}' for '{proj_name}'.
+Word Target: ~{max(70, int(sec_target * 0.5))} words of concise, direct technical explanation grounded in these facts:
+{project_fact_sheet[:900]}
+
+Rules:
+- Start directly with '{heading_prefix} {sec_title}'.
+- Clean technical prose without preamble.
+- If specific details are not in facts, use '[Add your <thing> here.]'."""
+
             # Set max_tokens with headroom for reasoning models (words * 2.5 + 600, at least 1024)
             sec_max_tokens = max(1024, int(sec_target * 2.5 + 600))
 
             sec_md = ""
             last_reason = "unknown"
             for attempt in range(1, 3):
+                prompt_to_use = writer_prompt if attempt == 1 else shorter_prompt
+                tokens_to_request = sec_max_tokens if attempt == 1 else max(600, int(sec_target * 1.5 + 300))
                 try:
                     sec_md, u = robust_generate_text(
-                        writer_prompt,
+                        prompt_to_use,
                         is_easy=is_easy_section,
                         temperature=0.25,
-                        max_tokens=sec_max_tokens,
+                        max_tokens=tokens_to_request,
                         on_rate_limit=notify_rate_limit,
                     )
                     add_tokens(u.get("input_tokens", 0), u.get("output_tokens", 0))
@@ -1138,14 +1304,16 @@ Continue:"""
                         except Exception as cont_err:
                             logger.warning("Continuation for '%s' failed: %s", sec_title, cont_err)
 
-                    # Reject canned boilerplate or severe truncation (regenerate once)
-                    if is_canned_boilerplate(sec_md, sec_target) and attempt == 1:
+                    # Reject canned boilerplate or severe truncation (regenerate once with shorter prompt)
+                    if is_canned_boilerplate(sec_md, sec_target, is_intro=(is_intro_section or is_summary_section)) and attempt == 1:
                         last_reason = "boilerplate_rejected"
                         logger.warning(
-                            "Section '%s' (s_idx=%d) attempt %d matched boilerplate or was too short (%d words). Regenerating...",
+                            "Section '%s' (s_idx=%d) attempt %d matched boilerplate or was too short (%d words). Regenerating with focused prompt...",
                             sec_title, s_idx, attempt, len(sec_md.split())
                         )
-                        writer_prompt += "\n\nREWRITE NOTE: Avoid generic boilerplate like 'leverages a modular multi-agent architecture'. Provide specific engineering depth or use '[Add your ...]'."
+                        rewrite_note = "\n\nREWRITE NOTE: Avoid generic boilerplate like 'leverages a modular multi-agent architecture'. Provide specific engineering depth or use '[Add your ...]'."
+                        writer_prompt += rewrite_note
+                        shorter_prompt += rewrite_note
                         sec_md = ""
                         continue
 
@@ -1166,7 +1334,12 @@ Continue:"""
                     sec_title, s_idx, last_reason
                 )
                 with placeholder_lock:
-                    placeholder_sections.append({"index": s_idx, "title": sec_title, "reason": last_reason})
+                    placeholder_sections.append({
+                        "index": s_idx,
+                        "title": sec_title,
+                        "reason": last_reason,
+                        "chapter": actual_ch_num,
+                    })
                 emit({
                     "type": "section_fallback",
                     "section_index": s_idx,
@@ -1175,10 +1348,10 @@ Continue:"""
                 })
 
             # Post-process: sanitize markdown, remove fences, remove ASCII boxes, fill tokens
-            sec_md = sanitize_section_markdown(sec_md, domain_name, proj_name, sources=chapter_sources)
+            sec_md = sanitize_section_markdown(sec_md, domain_name, proj_name, sources=chapter_sources, duration=duration)
 
-            # Ensure section ends with a full stop
-            if sec_md and sec_md[-1] not in ".!?\":\n":
+            # Ensure section ends with a full stop, but NEVER add '.' after '[Add your ... here.]' or ']'
+            if sec_md and sec_md[-1] not in ".!?\":\n" and not sec_md.rstrip().endswith("]"):
                 sec_md += "."
 
             logger.info("Section '%s' generated using %d words, active model=%s", sec_title, len(sec_md.split()), get_current_model())
@@ -1279,8 +1452,8 @@ Continue:"""
     raw_markdown = "\n\n".join(item[1] for item in all_rendered_items)
 
     # Sanitize markdown, remove ASCII frames, and fill template tokens
-    raw_markdown = sanitize_section_markdown(raw_markdown, domain_name, proj_name, sources=all_sources)
-    raw_markdown = ensure_unique_figure_and_table_captions(raw_markdown)
+    raw_markdown = sanitize_section_markdown(raw_markdown, domain_name, proj_name, sources=all_sources, duration=duration)
+    raw_markdown = ensure_unique_figure_and_table_captions(raw_markdown, is_short=(length_preset == "short"))
 
     # Clean and renumber citations gaplessly
     renumbered_markdown, final_sources = filter_and_renumber_sources(raw_markdown, all_sources)
@@ -1316,7 +1489,7 @@ Continue:"""
             ieee_refs.append(f"[{i}] {s_title}, Available: {s_url}.")
         else:
             ieee_refs.append(f"[{i}] {s_title}.")
-    if len(final_sources) < 5:
+    if len(final_sources) < 3:
         ieee_refs.append("[Add more references here]")
     refs_block = "\n\n".join(ieee_refs)
     if "## References" in renumbered_markdown:
@@ -1352,10 +1525,17 @@ Continue:"""
     state["title"] = doc_title
 
     placeholder_count = len(placeholder_sections)
-    if placeholder_count / max(1, total_sections) > 0.10:
+    ch1_or_abs_fallback = any(
+        p.get("chapter") == 1
+        or "abstract" in p.get("title", "").lower()
+        or p.get("title", "").lower().startswith("1.")
+        or "chapter 1" in p.get("title", "").lower()
+        for p in placeholder_sections
+    )
+    if (placeholder_count / max(1, total_sections) > 0.10) or ch1_or_abs_fallback:
         logger.warning(
-            "Run completed with warnings: %d of %d sections (%.1f%%) are placeholders.",
-            placeholder_count, total_sections, (placeholder_count / total_sections) * 100
+            "Run completed with warnings: %d of %d sections (%.1f%%) are placeholders. Ch1/Abstract fallback=%s",
+            placeholder_count, total_sections, (placeholder_count / total_sections) * 100, ch1_or_abs_fallback
         )
         state["has_warnings"] = True
         state["status"] = "completed_with_warnings"
@@ -1363,6 +1543,7 @@ Continue:"""
             "placeholder_count": placeholder_count,
             "total_sections": total_sections,
             "placeholder_sections": [p["title"] for p in placeholder_sections],
+            "ch1_or_abs_fallback": ch1_or_abs_fallback,
         }
         state["warning_message"] = f"{placeholder_count} of {total_sections} sections could not be generated and require manual input."
 

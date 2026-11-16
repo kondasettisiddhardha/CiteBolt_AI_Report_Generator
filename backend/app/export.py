@@ -23,6 +23,7 @@ from pypdf import PdfReader, PdfWriter
 from app.text import (
     domain_of,
     normalize_text,
+    smart_title,
     source_description,
     strip_leading_title,
     strip_sources_section,
@@ -343,21 +344,26 @@ def _render_pdf_reportlab(
                 raw_text = flowable.getPlainText().strip()
                 page = getattr(getattr(self, "canv", None), "_pageNumber", 1)
                 low = raw_text.lower()
+                def _is_toc_excluded(text_low: str) -> bool:
+                    if "appendix" in text_low:
+                        return False
+                    return any(k in text_low for k in ["title page", "certificate", "signatures", "table of contents"])
+
                 if style == "Heading1":
                     if re.search(r"\bchapter\s+1\b(?!\d)", low):
                         NumberedCanvas._chapter1_page = page
                     # Exclude title page, certificate, signatures, and table of contents from TOC
-                    if not any(k in low for k in ["title page", "certificate", "signatures", "table of contents"]):
+                    if not _is_toc_excluded(low):
                         self.notify("TOCEntry", (0, raw_text, page, None))
                 elif style == "Heading2":
-                    if not any(k in low for k in ["title page", "certificate", "signatures", "table of contents"]):
-                        # List of Figures and List of Tables are top-level TOC entries
-                        if any(k in low for k in ["list of figures", "list of tables"]):
+                    if not _is_toc_excluded(low):
+                        # List of Figures, List of Tables, and Appendices are top-level TOC entries
+                        if any(k in low for k in ["list of figures", "list of tables", "appendix"]):
                             self.notify("TOCEntry", (0, raw_text, page, None))
                         else:
                             self.notify("TOCEntry", (1, raw_text, page, None))
                 elif style == "Heading3":
-                    if not any(k in low for k in ["certificate", "signatures"]):
+                    if not _is_toc_excluded(low):
                         self.notify("TOCEntry", (2, raw_text, page, None))
                 else:
                     fig_m = re.search(r"(?:Fig\.|Figure)\s+(\d+\.\d+)[:\s\-]+([^\]\n\r]+)", raw_text, re.IGNORECASE)
@@ -587,16 +593,31 @@ def _render_pdf_reportlab(
         textColor=colors.black if is_template else colors.HexColor("#4b5563"),
     )
 
+    lof_lot_style = ParagraphStyle(
+        "LOFLOTStyle",
+        fontName=font_regular,
+        fontSize=10 if is_template else 9.5,
+        leading=15 if is_template else 13,
+        textColor=colors.black if is_template else colors.HexColor("#374151"),
+    )
+
     def _format_toc_page(p: int) -> str:
         ch1 = NumberedCanvas._chapter1_page or 1
         if p < ch1:
             return _to_roman(p)
         return str(p - ch1 + 1)
 
-    for comp in (toc, lof, lot):
-        comp.levelStyles = [toc_level_0, toc_level_1, toc_level_2]
-        comp.dotsMinLevel = 0
-        comp.formatter = _format_toc_page
+    toc.levelStyles = [toc_level_0, toc_level_1, toc_level_2]
+    toc.dotsMinLevel = 0
+    toc.formatter = _format_toc_page
+
+    lof.levelStyles = [lof_lot_style]
+    lof.dotsMinLevel = 0
+    lof.formatter = _format_toc_page
+
+    lot.levelStyles = [lof_lot_style]
+    lot.dotsMinLevel = 0
+    lot.formatter = _format_toc_page
 
     story: list[Any] = []
 
@@ -633,12 +654,32 @@ def _render_pdf_reportlab(
     # Body elements
     skip_until_next_heading = False
     in_title_page = is_template
+    title_h1_rendered = False
+    title_to_use = smart_title(meta.get("title") or title or topic)
     next_is_guide = False
     prev_was_guide = False
+    skip_indices: set[int] = set()
     blocks = _body_blocks(body_md)
-    for block in blocks:
+    for idx, block in enumerate(blocks):
+        if idx in skip_indices:
+            continue
         kind = block["kind"]
         text = block.get("text", "")
+
+        # Ensure title page has the large bold project title at the very top
+        if is_template and in_title_page and not title_h1_rendered:
+            if kind == "h1":
+                title_h1_rendered = True
+                disp_title = title_to_use if text.lower() in ("title page", "title") else smart_title(text)
+                story.append(Spacer(1, 40))
+                story.append(Paragraph(_md_inline_to_reportlab(disp_title, is_template=True), title_page_h1_style))
+                story.append(Spacer(1, 20))
+                continue
+            else:
+                title_h1_rendered = True
+                story.append(Spacer(1, 40))
+                story.append(Paragraph(_md_inline_to_reportlab(title_to_use, is_template=True), title_page_h1_style))
+                story.append(Spacer(1, 20))
 
         if kind in ("h1", "h2", "h3"):
             skip_until_next_heading = False
@@ -693,8 +734,11 @@ def _render_pdf_reportlab(
                 if re.search(r"\bchapter\s+1\b(?!\d)", text.lower()):
                     story.append(MarkChapter1())
                 if in_title_page:
+                    if text.lower() in ("title page", "title"):
+                        continue
+                    disp_h1 = smart_title(text)
                     story.append(Spacer(1, 40))
-                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=True), title_page_h1_style))
+                    story.append(Paragraph(_md_inline_to_reportlab(disp_h1, is_template=True), title_page_h1_style))
                     story.append(Spacer(1, 20))
                 else:
                     story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), h1_style))
@@ -785,11 +829,36 @@ def _render_pdf_reportlab(
             else:
                 cleaned_diag = re.sub(r"^\s*>\s*", "", text).strip()
                 if cleaned_diag.startswith("[Insert diagram here"):
-                    story.append(Paragraph(_md_inline_to_reportlab(cleaned_diag, is_template=is_template), diagram_box_style))
-                elif re.match(r"^(?:Fig\.|Figure)\s+\d+\.\d+", text, re.IGNORECASE):
-                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style))
+                    diag_p = Paragraph(_md_inline_to_reportlab(cleaned_diag, is_template=is_template), diagram_box_style)
+                    if idx + 1 < len(blocks) and re.match(r"^(?:Fig\.|Figure)\s+\d+\.\d+", blocks[idx + 1].get("text", ""), re.IGNORECASE):
+                        cap_text = blocks[idx + 1].get("text", "")
+                        cap_p = Paragraph(_md_inline_to_reportlab(cap_text, is_template=is_template), caption_style)
+                        if story:
+                            setattr(story[-1], "keepWithNext", True)
+                        story.append(KeepTogether([diag_p, cap_p]))
+                        skip_indices.add(idx + 1)
+                    else:
+                        if story:
+                            setattr(story[-1], "keepWithNext", True)
+                        diag_p.keepWithNext = True
+                        story.append(diag_p)
                 elif re.match(r"^Table\s+\d+\.\d+", text, re.IGNORECASE):
-                    story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style))
+                    tbl_cap_p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style)
+                    if idx + 1 < len(blocks) and blocks[idx + 1].get("text", "").strip() == "[Insert table here]":
+                        holder_text = blocks[idx + 1].get("text", "").strip()
+                        holder_p = Paragraph(_md_inline_to_reportlab(holder_text, is_template=is_template), diagram_box_style)
+                        if story:
+                            setattr(story[-1], "keepWithNext", True)
+                        story.append(KeepTogether([tbl_cap_p, holder_p]))
+                        skip_indices.add(idx + 1)
+                    else:
+                        if story:
+                            setattr(story[-1], "keepWithNext", True)
+                        tbl_cap_p.keepWithNext = True
+                        story.append(tbl_cap_p)
+                elif re.match(r"^(?:Fig\.|Figure)\s+\d+\.\d+", text, re.IGNORECASE):
+                    cap_p = Paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style)
+                    story.append(cap_p)
                 else:
                     story.append(Paragraph(_md_inline_to_reportlab(text, is_template=is_template), body_style))
 

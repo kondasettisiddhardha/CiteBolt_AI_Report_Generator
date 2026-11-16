@@ -80,6 +80,42 @@ def clean_title(raw: str, fallback_topic: str = "") -> str:
     return value.rstrip(".")
 
 
+def smart_title(text: str) -> str:
+    """Title case text while preserving uppercase acronyms (AI & ML, IEEE, etc.), camelCase brand names, and lowercase minor words."""
+    if not text:
+        return ""
+    minor = {"and", "as", "at", "but", "by", "for", "in", "nor", "of", "on", "or", "so", "the", "to", "up", "yet", "via", "with", "&"}
+    known_acronyms = {
+        "AI", "ML", "DL", "NLP", "LLM", "LLMS", "API", "APIS", "UI", "UX", "IIT", "NIT",
+        "MIT", "IEEE", "ACM", "ISO", "IEC", "REST", "HTTP", "HTTPS", "JSON", "SQL", "NOSQL",
+        "DB", "DBMS", "OS", "CPU", "GPU", "TPU", "RAM", "ROM", "IOT", "AWS", "GCP", "PRN",
+        "BE", "BTECH", "MTECH", "B.E.", "B.TECH", "M.TECH", "PHD", "PH.D.", "MCA", "BCA",
+        "SRS", "HLD", "LLD", "SSE", "CI", "CD", "CI/CD", "ERP", "CRM", "IT", "CS", "CSE"
+    }
+    tokens = re.split(r"(\s+|[/\-_&()])", text)
+    result = []
+    word_idx = 0
+    non_space_count = sum(1 for t in tokens if t.strip() and not re.match(r"^[/\\-_&()]+$", t))
+    for token in tokens:
+        stripped = token.strip()
+        if not stripped or re.match(r"^[/\\-_&()]+$", stripped):
+            result.append(token)
+            continue
+        clean_token = re.sub(r"[^\w]", "", stripped)
+        upper_clean = clean_token.upper()
+        if upper_clean in known_acronyms or (clean_token.isupper() and 2 <= len(clean_token) <= 5):
+            result.append(token.upper() if token.isalpha() else token)
+        elif any(c.isupper() for c in clean_token[1:]) and any(c.islower() for c in clean_token):
+            # Preserve camelCase / PascalCase brand names (e.g. CiteBolt, FastAPI, LangGraph)
+            result.append(stripped)
+        elif word_idx > 0 and word_idx < non_space_count - 1 and stripped.lower() in minor:
+            result.append(stripped.lower())
+        else:
+            result.append(stripped.capitalize())
+        word_idx += 1
+    return "".join(result)
+
+
 def strip_heading_numbering(markdown: str) -> str:
     """Strip leading numbers like '1. ', '2) ', '3.1 ' from ## and ### headings."""
     def clean_line(match: re.Match[str]) -> str:
