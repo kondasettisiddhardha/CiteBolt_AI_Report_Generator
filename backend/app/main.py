@@ -215,6 +215,23 @@ def me(user: User | None = Depends(get_optional_user), db: Session = Depends(get
 
 # --- runs --------------------------------------------------------------
 def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
+    outline_data = json.loads(run.outline_json) if getattr(run, "outline_json", None) else None
+    completed_sections = 0
+    total_sections = 0
+    current_section_title = None
+    if outline_data and isinstance(outline_data, list):
+        total_sections = len(outline_data)
+        completed_sections = sum(1 for s in outline_data if s.get("completed"))
+        for s in outline_data:
+            if not s.get("completed"):
+                current_section_title = s.get("title") or s.get("heading")
+                break
+
+    elapsed = run.elapsed_seconds or 0
+    if run.status == "running" and run.created_at:
+        now = datetime.utcnow()
+        elapsed = max(elapsed, int((now - run.created_at).total_seconds()))
+
     data: dict[str, Any] = {
         "id": run.id,
         "topic": run.topic,
@@ -225,10 +242,13 @@ def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
         "word_count": run.word_count or (len(run.report_markdown.split()) if run.report_markdown else 0),
         "token_count": run.token_count or 0,
         "cost_usd": float(run.cost_usd or 0.0),
-        "elapsed_seconds": run.elapsed_seconds or 0,
+        "elapsed_seconds": elapsed,
+        "completed_sections": completed_sections,
+        "total_sections": total_sections,
+        "current_section_title": current_section_title,
         "length": getattr(run, "length", "standard") or "standard",
         "target_words": getattr(run, "target_words", 4000) or 4000,
-        "outline": json.loads(run.outline_json) if getattr(run, "outline_json", None) else None,
+        "outline": outline_data,
         "front_matter": json.loads(run.front_matter_json) if getattr(run, "front_matter_json", None) else None,
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
@@ -539,6 +559,21 @@ def cancel(
         raise HTTPException(status_code=409, detail="That run already finished.")
     cancel_run(run_id)
     return {"ok": True}
+
+
+@app.post("/api/runs/{run_id}/finalise")
+@app.post("/api/runs/{run_id}/finalize")
+def finalise_run_endpoint(
+    run_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    run = _owned_run(run_id, user, db)
+    from app.agents.section_engine import finalise_run_from_sections
+    try:
+        return finalise_run_from_sections(run.id, session=db)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to finalise run: {exc}")
 
 
 @app.post("/api/runs/{run_id}/retry")

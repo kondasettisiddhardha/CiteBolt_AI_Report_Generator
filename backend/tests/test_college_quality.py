@@ -2376,6 +2376,81 @@ Numbered deployment steps:
         sec_9_4_fig = filter_grounded_college_section("9.4 User Feedback", "User feedback was positive (see Fig. 9.1). Testing continued smoothly.", facts_with_feedback)
         self.assertNotIn("Fig. 9.1", sec_9_4_fig)
 
+    def test_regression_http_401_fast_abort(self):
+        """Test that HTTP 401 / invalid_api_key immediately raises AuthenticationError without retry loop."""
+        from app.llm import AuthenticationError, generate_text
+
+        with patch("app.llm.get_llm") as mock_get_llm:
+            mock_llm = MagicMock()
+            mock_llm.invoke.side_effect = Exception("401 Client Error: Unauthorized for url: https://api.groq.com/openai/v1/chat/completions (invalid_api_key)")
+            mock_get_llm.return_value = mock_llm
+
+            with self.assertRaises(AuthenticationError) as ctx:
+                generate_text("test prompt")
+            self.assertIn("Invalid Groq API key (HTTP 401)", str(ctx.exception))
+            # Verify invoke was called only once (no retries)
+            self.assertEqual(mock_llm.invoke.call_count, 1)
+
+    def test_regression_run_payload_state_recovery(self):
+        """Test that _run_payload recovers completed_sections, total_sections, current_section_title, and elapsed_seconds."""
+        from app.main import _run_payload
+        from app.models import Run
+        from datetime import datetime, timedelta
+
+        dummy_outline = [
+            {"title": "Section 1", "completed": True, "content": "Done content"},
+            {"title": "Section 2", "completed": True, "content": "Done content 2"},
+            {"title": "Section 3", "completed": False, "content": ""},
+        ]
+        created = datetime.utcnow() - timedelta(seconds=120)
+        run = Run(
+            id="testrun123",
+            topic="Test Topic",
+            status="running",
+            outline_json=json.dumps(dummy_outline),
+            created_at=created,
+            elapsed_seconds=100,
+        )
+
+        payload = _run_payload(run)
+        self.assertEqual(payload["completed_sections"], 2)
+        self.assertEqual(payload["total_sections"], 3)
+        self.assertEqual(payload["current_section_title"], "Section 3")
+        self.assertGreaterEqual(payload["elapsed_seconds"], 100)
+
+    def test_regression_finalise_run_from_sections(self):
+        """Test finalise_run_from_sections creates completed report from partial outline."""
+        from app.agents.section_engine import finalise_run_from_sections
+        from app.models import Run
+
+        outline = [
+            {"title": "Title page", "completed": True, "content": "# Test Title"},
+            {"title": "1.1 Overview of the Domain", "completed": True, "content": "### 1.1 Overview\n\nOverview content."},
+            {"title": "1.2 Project Introduction", "completed": False, "content": ""},
+            {"title": "References", "completed": False, "content": ""},
+            {"title": "Appendix B: Glossary", "completed": False, "content": ""},
+        ]
+
+        dummy_run = Run(
+            id="dummy_finalise_test",
+            topic="CiteBolt Multi-Agent",
+            status="running",
+            outline_json=json.dumps(outline),
+            front_matter_json=json.dumps({"projectTitle": "CiteBolt Test"}),
+            report_markdown="### 1.1 Overview\n\nOverview content.",
+        )
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = dummy_run
+
+        res = finalise_run_from_sections("dummy_finalise_test", session=mock_session)
+        self.assertTrue(res["ok"])
+        self.assertEqual(dummy_run.status, "completed")
+        self.assertIn("### 1.1 Overview", dummy_run.report_markdown)
+        self.assertIn("1.2 Project Introduction", dummy_run.report_markdown)
+        self.assertIn("References", dummy_run.report_markdown)
+        self.assertGreater(dummy_run.word_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from app.agents.research import _collect_sources
 from app.config import GROQ_FALLBACK_MODELS, GROQ_MODEL
-from app.llm import DailyTokenLimitError, ModelNotFoundError, compute_cost, generate_text
+from app.llm import AuthenticationError, DailyTokenLimitError, ModelNotFoundError, compute_cost, generate_text
 from app.text import clean_title, filter_and_renumber_sources, smart_title, strip_sources_section
 
 logger = logging.getLogger("citebolt.section_engine")
@@ -2468,6 +2468,13 @@ def run_section_pipeline(
         while True:
             try:
                 return paced_generate_text(prompt, model=target_model, **kwargs)
+            except AuthenticationError as auth_err:
+                logger.error("Authentication failed (HTTP 401): %s", auth_err)
+                emit({
+                    "type": "error",
+                    "message": f"Authentication failed: {auth_err}",
+                })
+                raise auth_err
             except ModelNotFoundError as mnf:
                 logger.warning("Model %s unavailable on Groq: %s", target_model, mnf)
                 with model_lock:
@@ -2509,6 +2516,16 @@ def run_section_pipeline(
                     else:
                         # All fallback models exhausted - escalate to pause run
                         raise dt_err
+
+    def robust_generate_text_with_watchdog(prompt: str, is_easy: bool = False, timeout_sec: float = 180.0, **kwargs) -> tuple[str, dict[str, int]]:
+        """Run robust_generate_text under a 3-minute watchdog timeout."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(robust_generate_text, prompt, is_easy=is_easy, **kwargs)
+            try:
+                return future.result(timeout=timeout_sec)
+            except concurrent.futures.TimeoutError as te:
+                logger.warning("Watchdog triggered: LLM call exceeded %s seconds timeout", timeout_sec)
+                raise TimeoutError(f"LLM call exceeded {timeout_sec} seconds timeout") from te
 
     def notify_rate_limit(msg: str, wait_sec: float):
         emit({
@@ -2577,6 +2594,7 @@ def run_section_pipeline(
                         r.outline_json = json.dumps(sections, ensure_ascii=False)
                         r.report_markdown = partial_md
                         r.word_count = len(partial_md.split())
+                        r.elapsed_seconds = max(r.elapsed_seconds or 0, int(time.time() - start_time))
                         with sources_lock:
                             srcs = list(all_sources)
                         r.sources_json = json.dumps(srcs, ensure_ascii=False)
@@ -2719,11 +2737,12 @@ Keywords: [5-7 comma-separated domain keywords]"""
             abs_body = ""
             for abs_attempt in range(1, 3):
                 try:
-                    abs_text, abs_usage = robust_generate_text(
+                    abs_text, abs_usage = robust_generate_text_with_watchdog(
                         abs_prompt,
                         is_easy=False,
                         temperature=0.2,
                         max_tokens=1500,
+                        timeout_sec=180.0,
                         on_rate_limit=notify_rate_limit,
                     )
                     add_tokens(abs_usage.get("input_tokens", 0), abs_usage.get("output_tokens", 0))
@@ -2736,6 +2755,11 @@ Keywords: [5-7 comma-separated domain keywords]"""
                         break
                     else:
                         logger.warning("Abstract attempt %d returned short or empty body (%d words). Retrying...", abs_attempt, len(cand_prose.split()))
+                except AuthenticationError as auth_err:
+                    raise auth_err
+                except (TimeoutError, concurrent.futures.TimeoutError) as te:
+                    logger.warning("Watchdog: Abstract generation attempt %d timed out after 3 minutes: %s", abs_attempt, te)
+                    break
                 except DailyTokenLimitError as dt_err:
                     raise dt_err
                 except Exception as exc:
@@ -2948,14 +2972,20 @@ Sources available:
 Extract 4-5 concise domain background facts.
 Return ONLY bullet points starting with '- '."""
             try:
-                domain_facts, usage = robust_generate_text(
+                domain_facts, usage = robust_generate_text_with_watchdog(
                     analysis_prompt,
                     is_easy=False,
                     temperature=0.15,
                     max_tokens=400,
+                    timeout_sec=180.0,
                     on_rate_limit=notify_rate_limit,
                 )
                 add_tokens(usage.get("input_tokens", 0), usage.get("output_tokens", 0))
+            except AuthenticationError as auth_err:
+                raise auth_err
+            except (TimeoutError, concurrent.futures.TimeoutError) as te:
+                logger.warning("Watchdog: Chapter %d research analysis timed out after 3 minutes (%s).", actual_ch_num, te)
+                domain_facts = f"- Domain foundations and background context of {topic}."
             except DailyTokenLimitError as dt_err:
                 raise dt_err
             except Exception:
@@ -3233,15 +3263,27 @@ Rules:
 
             sec_md = ""
             last_reason = "unknown"
+            sec_start_time = time.time()
             for attempt in range(1, 3):
+                # Watchdog check: if already 3 minutes on this section, fail to placeholder
+                if time.time() - sec_start_time > 180.0:
+                    last_reason = "watchdog_timeout_3min"
+                    logger.warning(
+                        "Watchdog: Section '%s' (s_idx=%d) stalled for 3 minutes; failing to placeholder.",
+                        sec_title, s_idx
+                    )
+                    break
+
                 prompt_to_use = writer_prompt if attempt == 1 else shorter_prompt
                 tokens_to_request = sec_max_tokens if attempt == 1 else max(600, int(sec_target * 1.5 + 300))
+                remaining_sec = max(10.0, 180.0 - (time.time() - sec_start_time))
                 try:
-                    sec_md, u = robust_generate_text(
+                    sec_md, u = robust_generate_text_with_watchdog(
                         prompt_to_use,
                         is_easy=is_easy_section,
                         temperature=0.25,
                         max_tokens=tokens_to_request,
+                        timeout_sec=remaining_sec,
                         on_rate_limit=notify_rate_limit,
                     )
                     add_tokens(u.get("input_tokens", 0), u.get("output_tokens", 0))
@@ -3271,11 +3313,13 @@ Instructions:
 
 Continue:"""
                         try:
-                            cont_text, cont_u = robust_generate_text(
+                            remaining_cont = max(10.0, 180.0 - (time.time() - sec_start_time))
+                            cont_text, cont_u = robust_generate_text_with_watchdog(
                                 continue_prompt,
                                 is_easy=is_easy_section,
                                 temperature=0.25,
                                 max_tokens=max(600, int(sec_target * 1.5 + 300)),
+                                timeout_sec=remaining_cont,
                                 on_rate_limit=notify_rate_limit,
                             )
                             add_tokens(cont_u.get("input_tokens", 0), cont_u.get("output_tokens", 0))
@@ -3307,6 +3351,16 @@ Continue:"""
                         sec_md = ""
                         continue
 
+                    break
+                except AuthenticationError as auth_err:
+                    raise auth_err
+                except (TimeoutError, concurrent.futures.TimeoutError) as te:
+                    last_reason = "watchdog_timeout_3min"
+                    logger.warning(
+                        "Watchdog: Section '%s' (s_idx=%d) timed out after 3 minutes. Failing to placeholder (%s).",
+                        sec_title, s_idx, te
+                    )
+                    sec_md = ""
                     break
                 except DailyTokenLimitError as dt_err:
                     raise dt_err
@@ -3379,6 +3433,24 @@ Continue:"""
             for future in concurrent.futures.as_completed(futures):
                 ch_idx, subsecs, _ = future.result()
                 rendered_chapters.append((ch_idx, subsecs))
+    except AuthenticationError as auth_exc:
+        logger.error("Run aborted due to authentication error: %s", auth_exc)
+        state["status"] = "failed"
+        state["error_message"] = str(auth_exc)
+        emit({"type": "error", "message": str(auth_exc)})
+        if run_id:
+            try:
+                from app.db import SessionLocal
+                from app.models import Run
+                with SessionLocal() as session:
+                    r = session.get(Run, run_id)
+                    if r:
+                        r.status = "failed"
+                        r.error_message = str(auth_exc)
+                        session.commit()
+            except Exception:
+                pass
+        return state
     except DailyTokenLimitError as dt_exc:
         logger.warning("All configured Groq models hit daily token limits: %s", dt_exc)
         state["paused"] = True
@@ -3620,3 +3692,191 @@ Continue:"""
     })
 
     return state
+
+
+def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, Any]:
+    """Finalise a stalled or partially completed run from its saved sections in the DB."""
+    from datetime import datetime
+    from app.db import SessionLocal
+    from app.models import Run
+
+    close_session = False
+    if session is None:
+        session = SessionLocal()
+        close_session = True
+
+    try:
+        r = session.get(Run, run_id)
+        if not r:
+            raise ValueError(f"Run {run_id} not found")
+
+        outline_raw = r.outline_json
+        if not outline_raw:
+            raise ValueError(f"Run {run_id} has no outline_json")
+
+        outline = json.loads(outline_raw)
+        fm = json.loads(r.front_matter_json or "{}") if r.front_matter_json else {}
+        topic = r.topic or "Research Report"
+        domain_name, proj_name = extract_domain_and_project(topic, fm)
+        duration = (fm.get("duration") or "").strip()
+
+        sources = []
+        try:
+            sources = json.loads(r.sources_json or "[]")
+        except Exception:
+            pass
+
+        for idx, sec in enumerate(outline):
+            if sec.get("completed") and sec.get("content"):
+                continue
+
+            title = clean_title(str(sec.get("title", f"Section {idx + 1}")))
+            lvl = int(sec.get("level", 1))
+            norm_t = title.lower()
+            heading_prefix = "#" * min(3, lvl + 1)
+            clean_sec_title = re.sub(r"^\d+(?:\.\d+)*\s*", "", title).strip()
+
+            fm_val = format_front_matter_section(title, topic, fm, outline)
+            if fm_val is not None:
+                sec["content"] = fm_val
+                sec["completed"] = True
+                continue
+
+            if "abstract" in norm_t:
+                synth = synthesize_academic_abstract(proj_name, domain_name)
+                sec["content"] = f"## Abstract\n\n{synth}\n\nKeywords: {proj_name}, {domain_name}, software architecture, engineering implementation, analysis, system evaluation"
+                sec["completed"] = True
+                continue
+
+            if lvl == 1:
+                sec["content"] = f"# {title}"
+                sec["completed"] = True
+                continue
+            if re.search(r"^1\.5\b", title):
+                sec["content"] = build_deterministic_roadmap_section(title, heading_prefix)
+                sec["completed"] = True
+                continue
+            if re.search(r"^4\.6\b", title) or "data design" in norm_t:
+                sec["content"] = build_deterministic_data_design_section(title, heading_prefix)
+                sec["completed"] = True
+                continue
+            if re.search(r"^6\.6\b", title) or "team structure" in norm_t:
+                sec["content"] = f"{heading_prefix} {title}\n\nThe project was developed by a single student."
+                sec["completed"] = True
+                continue
+            if re.search(r"^7\.3\b", title) or "data dictionary" in norm_t:
+                sec["content"] = build_deterministic_data_dictionary_section(title, heading_prefix)
+                sec["completed"] = True
+                continue
+            if re.search(r"^10\.3\b", title):
+                sec["content"] = build_deterministic_installation_section(title, heading_prefix)
+                sec["completed"] = True
+                continue
+            if re.search(r"^10\.5\b", title):
+                sec["content"] = f"""{heading_prefix} {title}\n\nSystem maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
+                sec["completed"] = True
+                continue
+            if re.search(r"^10\.6\b", title):
+                db_file = get_verified_db_filename()
+                db_str = f"the SQLite database file (`{db_file}`)" if db_file != "the SQLite database file" else "the SQLite database file"
+                sec["content"] = f"""{heading_prefix} {title}\n\nDatabase backup and recovery is conducted by creating direct filesystem copies of {db_str}. In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
+                sec["completed"] = True
+                continue
+            if re.search(r"^10\.7\b", title):
+                sec["content"] = f"""{heading_prefix} {title}\n\nDeployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
+                sec["completed"] = True
+                continue
+            if re.search(r"^10\.8\b", title):
+                sec["content"] = f"""{heading_prefix} {title}\n\nThe CiteBolt system is deployed locally on a single machine utilizing a FastAPI backend served via Uvicorn and a Vite React frontend. Persistence is managed through a local SQLite database file without cloud infrastructure, Docker containerization, or automated CI/CD pipelines. Operational management consists of direct command-line execution and local process control."""
+                sec["completed"] = True
+                continue
+            if "references" in norm_t:
+                sec["content"] = "## References\n\n*(References will be listed in IEEE format)*"
+                sec["completed"] = True
+                continue
+
+            fallback_text = filter_grounded_college_section(title, "", fact_sheet=r.context or "", heading_prefix=heading_prefix)
+            if not fallback_text or fallback_text.strip() == f"{heading_prefix} {title}":
+                fallback_text = f"{heading_prefix} {title}\n\n[Add your {clean_sec_title} here.]"
+            sec["content"] = fallback_text
+            sec["completed"] = True
+
+        all_items = [str(s.get("content", "")) for s in outline if s.get("content")]
+        raw_markdown = "\n\n".join(all_items)
+
+        raw_markdown = sanitize_section_markdown(raw_markdown, domain_name, proj_name, sources=sources, duration=duration)
+        raw_markdown = normalize_college_captions_and_placeholders(raw_markdown)
+        raw_markdown = ensure_unique_figure_and_table_captions(raw_markdown, is_short=False)
+        raw_markdown = normalize_college_captions_and_placeholders(raw_markdown)
+
+        dynamic_lof, dynamic_lot = build_dynamic_lof_and_lot(raw_markdown)
+        raw_markdown = re.sub(r"## List of Figures.*?(?=\n## |\Z)", dynamic_lof + "\n\n", raw_markdown, flags=re.DOTALL)
+        raw_markdown = re.sub(r"## List of Tables.*?(?=\n## |\Z)", dynamic_lot + "\n\n", raw_markdown, flags=re.DOTALL)
+
+        renumbered_markdown, final_sources = filter_and_renumber_sources(raw_markdown, sources)
+        final_sources = deduplicate_and_clean_sources(final_sources)
+
+        ieee_refs = ["## References\n"]
+        for i, s in enumerate(final_sources, start=1):
+            s_title = s.get("title", "Reference Source").strip().rstrip(".")
+            s_url = s.get("url", "").strip()
+            if s_url:
+                ieee_refs.append(f"[{i}] {s_title}, Available: {s_url}.")
+            else:
+                ieee_refs.append(f"[{i}] {s_title}.")
+        if len(final_sources) < 3:
+            ieee_refs.append("[Add more references here]")
+        refs_block = "\n\n".join(ieee_refs)
+        if "## References" in renumbered_markdown:
+            renumbered_markdown = re.sub(
+                r"## References.*?(?=\n## |\Z)",
+                refs_block,
+                renumbered_markdown,
+                flags=re.DOTALL,
+            )
+        else:
+            renumbered_markdown += f"\n\n{refs_block}"
+
+        doc_title = ((fm.get("projectTitle") if fm else None) or r.title or topic).strip().rstrip(".")
+        if not renumbered_markdown.lstrip().startswith("# "):
+            final_markdown = f"# {doc_title}\n\n{renumbered_markdown}"
+        else:
+            final_markdown = renumbered_markdown
+
+        word_count = len(strip_sources_section(final_markdown).split())
+
+        r.outline_json = json.dumps(outline, ensure_ascii=False)
+        r.report_markdown = final_markdown
+        r.word_count = word_count
+        r.status = "completed"
+        r.completed_at = datetime.utcnow()
+        session.commit()
+
+        # Update active run if present
+        from app.runtime import get_active
+        active = get_active(run_id)
+        if active:
+            active.emit({
+                "type": "stage",
+                "node": "writing",
+                "status": "done",
+                "message": f"Report finalized ({word_count:,} words).",
+            })
+            active.emit({
+                "type": "report",
+                "report": final_markdown,
+                "sources": final_sources,
+            })
+            active.emit({"type": "complete", "run_id": run_id})
+            active.done = True
+
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "word_count": word_count,
+            "status": "completed",
+            "sections_count": len(outline),
+        }
+    finally:
+        if close_session:
+            session.close()

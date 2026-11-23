@@ -51,6 +51,9 @@ interface RunDetail {
   token_count?: number;
   cost_usd?: number;
   elapsed_seconds?: number;
+  completed_sections?: number;
+  total_sections?: number;
+  current_section_title?: string;
   created_at: string;
   completed_at: string | null;
   error_message: string | null;
@@ -99,6 +102,22 @@ export default function RunProgress() {
   const loadRun = useCallback(async () => {
     const data = await api<RunDetail>(`/api/runs/${id}`);
     setRun(data);
+    if (typeof data.elapsed_seconds === "number" && data.elapsed_seconds > 0) {
+      setSeconds(data.elapsed_seconds);
+    }
+    if (data.total_sections && data.total_sections > 0) {
+      setSectionProgress((prev) => {
+        const idx = data.completed_sections || 0;
+        if (!prev || idx > prev.index) {
+          return {
+            index: idx,
+            total: data.total_sections!,
+            title: data.current_section_title || prev?.title || "",
+          };
+        }
+        return prev;
+      });
+    }
     if (data.status === "failed" && data.error_message) setFatalError(data.error_message);
     if (data.status === "completed") {
       setSteps({

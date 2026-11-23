@@ -30,6 +30,14 @@ class ModelNotFoundError(Exception):
         self.model = model
 
 
+class AuthenticationError(Exception):
+    """Raised when Groq API key is invalid or unauthorized (HTTP 401)."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 def is_daily_limit_error(err_str: str) -> bool:
     """Distinguish per-minute (TPM/RPM) 429s from per-day (TPD/RPD) 429s."""
     lower = err_str.lower()
@@ -54,7 +62,7 @@ def compute_cost(input_tokens: int, output_tokens: int, model: str | None = None
     return round(cost, 6)
 
 
-def get_llm(model: str | None = None) -> Any:
+def get_llm(model: str | None = None, timeout: float = 60.0) -> Any:
     """Return the Groq chat model for the requested or default model."""
     if not GROQ_API_KEY:
         raise RuntimeError(
@@ -76,6 +84,7 @@ def get_llm(model: str | None = None) -> Any:
         "temperature": 0.2,
         "max_tokens": 8192,
         "max_retries": 0,  # the graph handles retries with backoff
+        "request_timeout": timeout,
     }
     model_lower = chosen_model.lower()
     if any(k in model_lower for k in ["gpt-oss", "deepseek-r1", "-r1", "qwq", "o1", "o3"]):
@@ -94,10 +103,11 @@ def generate_text(
     max_tokens: int = 4096,
     on_rate_limit: Any | None = None,
     model: str | None = None,
+    timeout: float = 60.0,
 ) -> tuple[str, dict[str, int]]:
     """Generate text from LLM with token usage tracking, TPM backoff, and TPD fast-exit."""
     chosen_model = model or GROQ_MODEL
-    llm = get_llm(model=chosen_model)
+    llm = get_llm(model=chosen_model, timeout=timeout)
     llm.temperature = temperature
     llm.max_tokens = max_tokens
 
@@ -146,9 +156,21 @@ def generate_text(
         except Exception as exc:
             last_err = exc
             err_str = str(exc)
+            err_lower = err_str.lower()
+
+            # Fast-abort on HTTP 401 / invalid API key
+            if (
+                "401" in err_str
+                or "invalid_api_key" in err_lower
+                or "invalid api key" in err_lower
+                or "unauthorized" in err_lower
+            ):
+                raise AuthenticationError(
+                    f"Invalid Groq API key (HTTP 401). Please check GROQ_API_KEY in backend/.env: {err_str}"
+                ) from exc
 
             # Check for non-existent or inaccessible model (404)
-            if "404" in err_str or "does not exist" in err_str.lower():
+            if "404" in err_str or "does not exist" in err_lower:
                 raise ModelNotFoundError(
                     message=f"Model {chosen_model} not found or no access: {err_str}",
                     model=chosen_model,
@@ -166,7 +188,7 @@ def generate_text(
                     retry_after=wait_str,
                 ) from exc
 
-            is_429 = "429" in err_str.lower() or "rate limit" in err_str.lower() or "rate_limit" in err_str.lower()
+            is_429 = "429" in err_lower or "rate limit" in err_lower or "rate_limit" in err_lower
             wait_sec = min(35.0, 3.0 * (1.8 ** (attempt - 1)))
             match_sec = re.search(r"try again in ([0-9.]+)s", err_str, re.IGNORECASE)
             if match_sec:
