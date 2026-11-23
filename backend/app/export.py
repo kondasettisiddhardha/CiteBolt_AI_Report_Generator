@@ -258,6 +258,16 @@ def _normalize_college_title_page_markdown(md: str) -> str:
                 flags=re.IGNORECASE,
             )
 
+        # Ensure "Department:" line contains only the department and not "University: ..."
+        m_dept_univ = re.search(r"^(Department:\s*.*?)(?:,\s*|\s+)University:\s*(.*?)$", tp_text, flags=re.MULTILINE | re.IGNORECASE)
+        if m_dept_univ:
+            d_val = m_dept_univ.group(1).strip()
+            u_val = m_dept_univ.group(2).strip()
+            repl = f"{d_val}"
+            if "University:" not in tp_text[m_dept_univ.end():]:
+                repl += f"\n\nUniversity: {u_val}"
+            tp_text = tp_text[:m_dept_univ.start()] + repl + tp_text[m_dept_univ.end():]
+
     rest = md[m_cert.start():]
     # Clean certificate asterisks around university if any: e.g. *sandip university* -> Sandip University
     rest = re.sub(r"\*([a-z\s]+university[a-z\s]*)\*", lambda m: smart_title(m.group(1)), rest, flags=re.IGNORECASE)

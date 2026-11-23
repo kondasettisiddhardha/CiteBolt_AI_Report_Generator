@@ -203,6 +203,74 @@ NUMBER_WORDS_RE = (
     r"twenty|thirty|forty|fourty|fifty|sixty|seventy|eighty|ninety|hundred|\d+))?"
 )
 
+BANNED_COLLEGE_CLAIM_PATTERNS: list[str] = [
+    r"\bcontinuous\s+integration\b",
+    r"\bci\s+runs?\b",
+    r"\bci/cd\b",
+    r"\bevery\s+commit\b",
+    r"\bend-to-end\s+tests?\b",
+    r"\bend-to-end\s+testing\b",
+    r"\bsmoke\s+tests?\b",
+    r"\bregression\s+tests?\b",
+    r"\bexecution\s+time\s+per\s+agent\b",
+    r"\bthroughput\b",
+    r"\blatency\b",
+    r"\bsuccess\s+rates?\b",
+    r"\bcannot\s+handle\s+concurrent\b",
+    r"\bmonolithic\s+pipelines?\b",
+    r"\bdemonstrates\s+successful\s+end-to-end\b",
+    r"\bupdates?\s+every\s+2\s*(?:s|sec|seconds?)\b",
+    r"\bfew\s+hundred\s+milliseconds\b",
+    r"\blog\s+rotation\b",
+    r"\bmonitoring\b",
+    r"\btest-driven\b",
+    r"\btest\s+driven\b",
+    r"\bmirroring\s+the\s+production\s+stack\b",
+    r"\beasy\s+migration\b",
+    r"\bfully\s+documented\b",
+    r"\bparallel\s+development\b",
+    r"\bcollected\s+comments\b",
+    r"\binform\s+ui\s+refinements\b",
+    r"\bacid\b",
+    r"\batomic\b",
+    r"\blogged\s+for\s+audit\b",
+    r"\brole-based\b",
+    r"\brole\s+based\b",
+    r"\bmigrated\s+automatically\b",
+    r"\bautomatically\s+migrated\b",
+    r"\bwithin\s+(?:two|2)\s+seconds?\b",
+    r"\bencrypted\s+smtp\b",
+    r"\bindependent\s+scaling\b",
+    r"\bindependently\s+scaled?\b",
+    r"\brobust(?!\s+capabilities)\b",
+    r"\bcomprehensive\s+unit\s+tests?\b",
+    r"\bcomprehensive\s+tests?\b",
+    r"\bqualitative\s+comments?\b",
+    r"\bsatisfaction\s+scores?\b",
+    r"\bservice\s+classes\b",
+    r"\bcommon\s+services\s+package\b",
+    r"\bthe\s+introductory\s+overview\s+provides\b",
+    r"\bconfirming\s+correct\s+orchestration\b",
+    r"\bcorrect\s+orchestration\b",
+    r"\baccurate\s+token\s+accounting\b",
+    r"\breliable\s+otp-based\s+authentication\b",
+    r"\bcore\s+functionality\b",
+    r"\bpytest\s+unit\s+tests\s+covering\s+all\s+core\s+functionalit\w*",
+    r"\bcovering\s+(?:all\s+)?core\s+functionalit\w*",
+    rf"\b(?:{NUMBER_WORDS_RE}|[0-9]+|[a-zA-Z])-test\s+suite\b",
+    r"\breliably\s+generates?\b",
+    r"\bacross\s+all\s+supported\s+types\s+and\s+lengths\b",
+    r"\bconfirming\s+the\s+architecture['’]?s\s+robustness\b",
+    r"\barchitecture['’]?s\s+robustness\b",
+    r"\bexisting\s+(?:ai\s+)?(?:writing\s+)?tools?\s+lack\b",
+    r"\bexisting\s+tools?\s+lack\b",
+    r"\bexisting\s+solutions?\b",
+    r"\bvalidate\s+core\s+functionality\b",
+    r"\breliable\s+end-to-end\s+operation\b",
+    r"\bcorrect\s+citation\s+handling\b",
+    r"\brobust\s+pause[\s/-]*resume\b",
+]
+
 
 def sanitize_section_output(sec_md: str) -> str:
     """Sanitize individual section LLM generation output (Run #6 fix).
@@ -1703,56 +1771,13 @@ Deployment challenges primarily center on managing external API rate limits and 
                     first_dropped = True
                 continue
 
-            # Unsupported claims (Item 1 & Item 3)
+            # Unsupported claims
             unsupported_claim = False
-            for pat in [
-                r"\bcontinuous\s+integration\b",
-                r"\bci\s+runs?\b",
-                r"\bci/cd\b",
-                r"\bevery\s+commit\b",
-                r"\bend-to-end\s+tests?\b",
-                r"\bend-to-end\s+testing\b",
-                r"\bsmoke\s+tests?\b",
-                r"\bregression\s+tests?\b",
-                r"\bexecution\s+time\s+per\s+agent\b",
-                r"\bthroughput\b",
-                r"\blatency\b",
-                r"\bsuccess\s+rates?\b",
-                r"\bcannot\s+handle\s+concurrent\b",
-                r"\bmonolithic\s+pipelines?\b",
-                r"\bdemonstrates\s+successful\s+end-to-end\b",
-                r"\bupdates?\s+every\s+2\s*(?:s|sec|seconds?)\b",
-                r"\bfew\s+hundred\s+milliseconds\b",
-                r"\blog\s+rotation\b",
-                r"\bmonitoring\b",
-                r"\btest-driven\b",
-                r"\btest\s+driven\b",
-                r"\bmirroring\s+the\s+production\s+stack\b",
-                r"\beasy\s+migration\b",
-                r"\bfully\s+documented\b",
-                r"\bparallel\s+development\b",
-                r"\bcollected\s+comments\b",
-                r"\binform\s+ui\s+refinements\b",
-                r"\bacid\b",
-                r"\batomic\b",
-                r"\blogged\s+for\s+audit\b",
-                r"\brole-based\b",
-                r"\brole\s+based\b",
-                r"\bmigrated\s+automatically\b",
-                r"\bautomatically\s+migrated\b",
-                r"\bwithin\s+(?:two|2)\s+seconds?\b",
-                r"\bencrypted\s+smtp\b",
-                r"\bindependent\s+scaling\b",
-                r"\bindependently\s+scaled?\b",
-                r"\brobust(?!\s+capabilities)\b",
-                r"\bcomprehensive\s+unit\s+tests?\b",
-                r"\bcomprehensive\s+tests?\b",
-                r"\bqualitative\s+comments?\b",
-                r"\bsatisfaction\s+scores?\b",
-                r"\bservice\s+classes\b",
-                r"\bcommon\s+services\s+package\b",
-                r"\bthe\s+introductory\s+overview\s+provides\b",
-            ]:
+            for pat in BANNED_COLLEGE_CLAIM_PATTERNS:
+                if re.search(pat, s_low):
+                    logger.info("Grounding filter dropped in [%s]: %s (reason: unsupported claim: %s)", sec_title, sent, pat)
+                    unsupported_claim = True
+                    break
                 if re.search(pat, s_low):
                     logger.info("Grounding filter dropped in [%s]: %s (reason: unsupported claim: %s)", sec_title, sent, pat)
                     unsupported_claim = True
@@ -2290,6 +2315,53 @@ The CiteBolt system is deployed locally on a single machine utilizing a FastAPI 
     return result
 
 
+def normalize_department_and_university(dept_raw: str, univ_raw: str) -> tuple[str, str, bool]:
+    """Normalize department and university fields.
+    
+    Detects if Department and University look mixed up:
+    - Department contains 'University:'
+    - University is empty while Department contains a university name.
+    
+    Returns:
+        (clean_department, clean_university, is_mixed_up)
+    """
+    dept = (dept_raw or "").strip()
+    univ = (univ_raw or "").strip()
+    is_mixed_up = False
+
+    # Check 1: Department contains "University:"
+    if re.search(r"\buniversity\s*:", dept, re.IGNORECASE):
+        is_mixed_up = True
+        parts = re.split(r"\buniversity\s*:\s*", dept, flags=re.IGNORECASE)
+        dept_part = parts[0].strip().rstrip(",;-\n ")
+        univ_part = parts[1].strip() if len(parts) > 1 else ""
+        dept = re.sub(r"^department\s*(?:of|:)\s*", "", dept_part, flags=re.IGNORECASE).strip()
+        if not univ and univ_part:
+            univ = univ_part
+    # Check 2: University is empty while Department contains a university name
+    elif not univ and re.search(r"\b(?:university|college|institute|polytechnic)\b", dept, re.IGNORECASE):
+        is_mixed_up = True
+        m_sep = re.search(
+            r"^(.*?)(?:,\s*|\s*-\s*|\s*\|\s*|\n+)(.*\b(?:university|college|institute|polytechnic)\b.*)$",
+            dept,
+            re.IGNORECASE,
+        )
+        if m_sep:
+            cand_dept = m_sep.group(1).strip()
+            cand_univ = m_sep.group(2).strip()
+            if any(k in cand_dept.lower() for k in ["department", "engineering", "science", "technology", "studies", "computing"]):
+                dept = re.sub(r"^department\s*(?:of|:)\s*", "", cand_dept, flags=re.IGNORECASE).strip()
+                univ = cand_univ
+            else:
+                univ = dept
+                dept = ""
+        else:
+            univ = dept
+            dept = ""
+
+    return dept, univ, is_mixed_up
+
+
 def format_front_matter_section(
     sec_title: str,
     topic: str,
@@ -2315,14 +2387,16 @@ def format_front_matter_section(
     degree_disp = degree_raw if degree_raw else "[Degree]"
 
     dept_raw = fm.get("department", "").strip()
-    if dept_raw:
-        dept_disp = smart_title(dept_raw) if dept_raw.islower() else dept_raw
+    univ_raw = fm.get("university", "").strip()
+    dept_clean, univ_clean, _ = normalize_department_and_university(dept_raw, univ_raw)
+
+    if dept_clean:
+        dept_disp = smart_title(dept_clean) if dept_clean.islower() else dept_clean
     else:
         dept_disp = "[Department Name]"
 
-    univ_raw = fm.get("university", "").strip()
-    if univ_raw:
-        univ_disp = smart_title(univ_raw) if univ_raw.islower() else univ_raw
+    if univ_clean:
+        univ_disp = smart_title(univ_clean) if univ_clean.islower() else univ_clean
     else:
         univ_disp = "[University Name]"
 
@@ -2352,6 +2426,7 @@ def format_front_matter_section(
         year_str = year_val if year_val.lower().startswith("academic year") else f"Academic Year: {year_val}"
         month_str = month_year_val if month_year_val.lower().startswith("month") else f"Month: {month_year_val}"
         dept_line = dept_disp if dept_disp.lower().startswith("department") else f"Department: {dept_disp}"
+        dept_line = re.sub(r"(?:,\s*|\s+)University:.*$", "", dept_line, flags=re.IGNORECASE).strip()
         univ_line = univ_disp if univ_disp.lower().startswith("university") else f"University: {univ_disp}"
 
         lines = [
@@ -2505,19 +2580,103 @@ def format_front_matter_section(
     return None
 
 
-def synthesize_academic_abstract(proj_name: str, domain_name: str, facts: str = "") -> str:
+def synthesize_academic_abstract(proj_name: str, domain_name: Any = "AI Research Assistant", facts: str = "") -> str:
     """Synthesize a grounded academic abstract describing only what was built and what tests check."""
+    if isinstance(domain_name, dict):
+        domain_name = domain_name.get("domain", "") or "AI Research Assistant"
+    domain_str = str(domain_name).strip() or "AI Research Assistant"
     return (
         f"This project presents the design, architecture, and implementation of {proj_name}, "
-        f"an automated research report generation platform in the domain of {domain_name}. "
+        f"an automated research report generation platform in the domain of {domain_str}. "
         f"The system coordinates an autonomous multi-agent workflow consisting of Research, Analysis, "
         f"and Writer agents orchestrated using LangGraph. The backend service is built using FastAPI "
         f"with SQLite database storage managed through SQLAlchemy ORM, and the user interface is developed "
         f"in React with Tailwind CSS and Vite. Document compilation produces publication-ready reports in "
         f"both ReportLab PDF and DOCX formats with automated citation numbering and grounding verification. "
-        f"System verification is conducted through automated pytest unit tests with mocked LLM and search responses "
-        f"to validate report structure, heading hierarchy, and formatting compliance."
+        f"System verification is conducted through automated pytest unit tests with mocked LLM and search responses."
     )
+
+
+def filter_grounded_college_abstract(
+    abs_text: str,
+    proj_name: str = "CiteBolt",
+    domain_name: Any = "AI Research Assistant",
+    fact_sheet: str = "",
+) -> str:
+    """Normalize unicode, filter banned claims, and ensure the test sentence in abstract is strictly compliant."""
+    if isinstance(domain_name, dict):
+        domain_name = domain_name.get("domain", "") or "AI Research Assistant"
+    domain_str = str(domain_name).strip() or "AI Research Assistant"
+
+    if not abs_text:
+        synth = synthesize_academic_abstract(proj_name, domain_str, fact_sheet)
+        return f"## Abstract\n\n{synth}\n\nKeywords: {proj_name}, {domain_str}, software architecture, engineering implementation, analysis, system evaluation"
+
+    # 1. Unicode normalization
+    text = normalize_unicode_punctuation(abs_text)
+
+    # 2. Extract Keywords line if present
+    keywords_line = ""
+    kw_m = re.search(r"\n\s*(Keywords:.*)$", text, re.IGNORECASE)
+    if kw_m:
+        keywords_line = kw_m.group(1).strip()
+        text = text[:kw_m.start()].strip()
+
+    # Strip ## Abstract heading if present
+    text = re.sub(r"^#+\s*Abstract\s*", "", text, flags=re.IGNORECASE).strip()
+
+    # Split into sentences
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    kept_sentences: list[str] = []
+    has_test_sentence = False
+
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+        s_low = sent.lower()
+
+        # Check if this sentence discusses tests / verification / unit tests
+        is_test_sent = any(k in s_low for k in ["test", "tests", "testing", "pytest", "verification", "verified by", "mocked llm"])
+
+        if is_test_sent:
+            # In the abstract, the test sentence may only say:
+            # "automated pytest unit tests with mocked LLM and search responses" with no count and no claims.
+            kept_sentences.append("System verification is conducted through automated pytest unit tests with mocked LLM and search responses.")
+            has_test_sentence = True
+            continue
+
+        # Drop sentences with banned claims
+        is_banned = False
+        for pat in BANNED_COLLEGE_CLAIM_PATTERNS:
+            if re.search(pat, s_low):
+                is_banned = True
+                break
+        if is_banned:
+            continue
+
+        # Check LLM model names
+        if any(m in s_low for m in ["gpt-oss", "llama", "qwen", "mixtral", "claude", "gemini", "openai/", "groq/"]):
+            continue
+
+        # Never contain placeholder text in abstract
+        if "[add your" in s_low or "[insert " in s_low:
+            continue
+
+        kept_sentences.append(sent)
+
+    if not has_test_sentence:
+        kept_sentences.append("System verification is conducted through automated pytest unit tests with mocked LLM and search responses.")
+
+    body_prose = " ".join(kept_sentences).strip()
+    if len(body_prose.split()) < 30:
+        synth = synthesize_academic_abstract(proj_name, domain_str, fact_sheet)
+        body_prose = synth
+
+    if not keywords_line:
+        keywords_line = f"Keywords: {proj_name}, {domain_str}, software architecture, engineering implementation, analysis, system evaluation"
+
+    return f"## Abstract\n\n{body_prose}\n\n{keywords_line}"
 
 
 def plan_outline(
@@ -2962,24 +3121,14 @@ Keywords: [5-7 comma-separated domain keywords]"""
                 synth = synthesize_academic_abstract(proj_name, domain_name, project_fact_sheet)
                 abs_body = f"## Abstract\n\n{synth}\n\nKeywords: {proj_name}, {domain_name}, system architecture, engineering analysis, implementation"
 
-            # Clean and sanitize abstract
+            # Clean, sanitize, and filter abstract with grounding & banned-claim rules
             fm_text = sanitize_section_markdown(abs_body, domain_name, proj_name)
-            # Remove claims about existing solutions, successful end-to-end, and ungrounded claims (Item 5)
-            for pat in [
-                r"[^\.\n]*(?:existing solutions|existing systems|successful end-to-end|demonstrates successful|meets all requirements)[^\.\n]*\.?",
-                r"[^\.\n]*(?:confirming correct orchestration|correct orchestration)[^\.\n]*\.?",
-                r"[^\.\n]*(?:accurate token accounting|token accounting)[^\.\n]*\.?",
-                r"[^\.\n]*(?:reliable otp-based authentication|otp-based authentication|otp flow)[^\.\n]*\.?",
-                r"[^\.\n]*(?:gpt-oss|llama|qwen|mixtral|claude|gemini|openai/|groq/)[^\.\n]*\.?",
-            ]:
-                fm_text = re.sub(pat, "", fm_text, flags=re.IGNORECASE)
-            fm_text = re.sub(r"\b\d+\s+(?:unit\s+|automated\s+)?tests?\b", "automated pytest unit tests", fm_text, flags=re.IGNORECASE)
-            # Guarantee abstract never contains [Add your ...] placeholder
-            fm_text = re.sub(r"\[Add your[^\]]*\]", "delivering dependable technical execution", fm_text, flags=re.IGNORECASE)
-            if not fm_text.strip().startswith("#"):
-                fm_text = f"## Abstract\n\n{fm_text.strip()}"
-            if "Keywords:" not in fm_text:
-                fm_text += f"\n\nKeywords: {proj_name}, {domain_name}, software architecture, engineering implementation, analysis, system evaluation"
+            fm_text = filter_grounded_college_abstract(
+                fm_text,
+                proj_name=proj_name,
+                domain_name=domain_name,
+                fact_sheet=project_fact_sheet,
+            )
 
             rendered_front_matter.append((idx, fm_text))
             persist_section_to_db(idx, fm_text)
@@ -3959,7 +4108,11 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
 
             if "abstract" in norm_t:
                 synth = synthesize_academic_abstract(proj_name, domain_name)
-                sec["content"] = f"## Abstract\n\n{synth}\n\nKeywords: {proj_name}, {domain_name}, software architecture, engineering implementation, analysis, system evaluation"
+                sec["content"] = filter_grounded_college_abstract(
+                    f"## Abstract\n\n{synth}",
+                    proj_name=proj_name,
+                    domain_name=domain_name,
+                )
                 sec["completed"] = True
                 continue
 

@@ -352,6 +352,15 @@ export default function RunComposer({
     hasTemplate &&
     (!frontMatter?.projectTitle?.trim() ||
       !frontMatter?.teamMembers?.some((m) => m.name.trim().length > 0));
+  const deptVal = (frontMatter?.department || "").trim();
+  const univVal = (frontMatter?.university || "").trim();
+  const isDeptUnivMixedUp =
+    isCollegeActive &&
+    Boolean(
+      deptVal &&
+        (deptVal.toLowerCase().includes("university:") ||
+          (!univVal && /\b(?:university|college|institute|polytechnic)\b/i.test(deptVal)))
+    );
   const isLongOrTemplate = length === "long" || hasTemplate;
   const isLimitReached = user ? runsLeft <= 0 : false;
 
@@ -843,6 +852,13 @@ export default function RunComposer({
                 <span>
                   Team details are empty; certificate and title page fields will be left blank.
                 </span>
+              </div>
+            )}
+
+            {isDeptUnivMixedUp && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>Department and University look mixed up</span>
               </div>
             )}
 

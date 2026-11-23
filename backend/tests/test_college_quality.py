@@ -2614,6 +2614,106 @@ Numbered deployment steps:
         self.assertEqual(payload["status"], "interrupted")
         self.assertTrue(payload["created_at"].endswith("Z"))
 
+    def test_regression_abstract_banned_claims_and_test_sentence(self):
+        """Item 1: Abstract is normalized, banned claims filtered, and test sentence strictly standardized."""
+        from app.agents.section_engine import filter_grounded_college_abstract, synthesize_academic_abstract
+
+        raw_abstract = (
+            "## Abstract\n\n"
+            "This project presents CiteBolt in the domain of AI Research Assistant. "
+            "Development followed a test\u2011driven methodology with three\u2011tier design. "
+            "Database transactions guarantee ACID compliance. "
+            "System verification is conducted through 14 automated pytest unit tests to validate core functionality, "
+            "ensure reliable end-to-end operation, guarantee correct citation handling, and maintain robust pause-resume.\n\n"
+            "Keywords: CiteBolt, AI Research Assistant, Multi-Agent"
+        )
+        filtered = filter_grounded_college_abstract(raw_abstract, proj_name="CiteBolt", domain_name="AI Research Assistant")
+        # Check unicode U+2011 was normalized
+        self.assertNotIn("\u2011", filtered)
+        # Check banned claims dropped
+        self.assertNotIn("test-driven", filtered)
+        self.assertNotIn("ACID", filtered)
+        self.assertNotIn("14", filtered)
+        self.assertNotIn("validate core functionality", filtered)
+        self.assertNotIn("reliable end-to-end operation", filtered)
+        self.assertNotIn("correct citation handling", filtered)
+        self.assertNotIn("robust pause-resume", filtered)
+        # Check single standardized test sentence
+        self.assertIn("automated pytest unit tests with mocked LLM and search responses", filtered)
+        self.assertNotIn("to validate", filtered)
+
+        # Also verify synthesized abstract conforms
+        synth = synthesize_academic_abstract("CiteBolt", "AI Research Assistant")
+        self.assertIn("automated pytest unit tests with mocked LLM and search responses", synth)
+        self.assertNotIn("to validate report structure", synth)
+        self.assertNotIn("core functionality", synth)
+
+    def test_regression_banned_phrases_across_all_sections(self):
+        """Item 2: Ban specific phrases in all sections."""
+        from app.agents.section_engine import filter_grounded_college_section
+
+        banned_cases = [
+            "Development includes pytest unit tests covering all core functionality in the suite.",
+            "Verification relies on a 14-test suite running against local endpoints.",
+            "The N-test suite verifies system execution.",
+            "The workflow reliably generates comprehensive research chapters.",
+            "The compiler produces reports across all supported types and lengths without error.",
+            "Experimental results confirm the architecture's robustness under high load.",
+            "Existing AI writing tools lack automated citation and grounding safeguards.",
+            "Existing tools lack multi-agent planning capabilities.",
+            "Existing solutions do not verify relational database constraints.",
+        ]
+        facts = "Project Facts: SQLite database, FastAPI backend, Vite frontend."
+        for phrase in banned_cases:
+            text = f"{phrase} The core architecture remains modular."
+            filtered = filter_grounded_college_section("5.1 Technologies", text, facts)
+            self.assertNotIn(phrase, filtered, f"Expected '{phrase}' to be dropped by grounding filter")
+
+    def test_regression_10_3_venv_scripts_activate_leading_dot(self):
+        """Item 3: 10.3 template uses .venv\\Scripts\\activate with leading dot."""
+        from app.agents.section_engine import build_deterministic_installation_section
+
+        inst = build_deterministic_installation_section("10.3 Installation Process")
+        self.assertIn(".venv\\Scripts\\activate", inst)
+        # Must have leading dot, not bare 'venv\\Scripts\\activate'
+        self.assertNotIn("\nvenv\\Scripts\\activate", inst)
+
+    def test_regression_front_matter_dept_university_normalization(self):
+        """Item 4: Front matter detects mixed up Dept/University and shows only department on Department: line."""
+        from app.agents.section_engine import normalize_department_and_university, format_front_matter_section
+
+        # Case 1: Department contains "University:"
+        dept_1 = "Computer Science and Engineering, University: Stanford University"
+        c_dept_1, c_univ_1, mixed_1 = normalize_department_and_university(dept_1, "")
+        self.assertTrue(mixed_1)
+        self.assertEqual(c_dept_1, "Computer Science and Engineering")
+        self.assertEqual(c_univ_1, "Stanford University")
+
+        fm_1 = {"department": dept_1, "university": ""}
+        tp_1 = format_front_matter_section("Title Page", "CiteBolt", fm_1)
+        self.assertIn("Department: Computer Science and Engineering", tp_1)
+        self.assertNotIn("Department: Computer Science and Engineering, University:", tp_1)
+        self.assertIn("University: Stanford University", tp_1)
+
+        # Case 2: University is empty while Department contains a university name
+        dept_2 = "Sandip University"
+        c_dept_2, c_univ_2, mixed_2 = normalize_department_and_university(dept_2, "")
+        self.assertTrue(mixed_2)
+        self.assertEqual(c_dept_2, "")
+        self.assertEqual(c_univ_2, "Sandip University")
+
+        fm_2 = {"department": dept_2, "university": ""}
+        tp_2 = format_front_matter_section("Title Page", "CiteBolt", fm_2)
+        self.assertIn("Department: [Department Name]", tp_2)
+        self.assertIn("University: Sandip University", tp_2)
+
+        # Case 3: Department has department name and university name separated
+        dept_3 = "Department of Information Technology, Harvard University"
+        c_dept_3, c_univ_3, mixed_3 = normalize_department_and_university(dept_3, "")
+        self.assertTrue(mixed_3)
+        self.assertEqual(c_dept_3, "Information Technology")
+        self.assertEqual(c_univ_3, "Harvard University")
+
 
 if __name__ == "__main__":
     unittest.main()
