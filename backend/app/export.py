@@ -457,18 +457,18 @@ def _render_pdf_reportlab(
                 def _is_toc_excluded(text_low: str) -> bool:
                     if "appendix" in text_low:
                         return False
-                    return any(k in text_low for k in ["title page", "certificate", "signatures", "table of contents"])
+                    return any(k in text_low for k in ["title page", "signatures", "table of contents"])
 
                 if style == "Heading1":
                     if re.search(r"\bchapter\s+1\b(?!\d)", low):
                         NumberedCanvas._chapter1_page = page
-                    # Exclude title page, certificate, signatures, and table of contents from TOC
+                    # Exclude title page, signatures, and table of contents from TOC
                     if not _is_toc_excluded(low):
                         self.notify("TOCEntry", (0, raw_text, page, None))
                 elif style == "Heading2":
                     if not _is_toc_excluded(low):
-                        # List of Figures, List of Tables, and Appendices are top-level TOC entries
-                        if any(k in low for k in ["list of figures", "list of tables", "appendix"]):
+                        # List of Figures, List of Tables, Certificate, Acknowledgements, Abstract and Appendices are top-level TOC entries
+                        if any(k in low for k in ["list of figures", "list of tables", "appendix", "certificate", "acknowledgement", "acknowledgment", "abstract"]):
                             self.notify("TOCEntry", (0, raw_text, page, None))
                         else:
                             self.notify("TOCEntry", (1, raw_text, page, None))
@@ -1633,6 +1633,7 @@ def _add_table(document, rows: list[list[str]]) -> None:
     """Add a Markdown table as a real Word table with a shaded header."""
     from docx.shared import Pt, RGBColor
     from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+    from docx.oxml import OxmlElement
 
     if not rows:
         return
@@ -1641,7 +1642,21 @@ def _add_table(document, rows: list[list[str]]) -> None:
     table.style = "Table Grid"
     table.autofit = True
 
+    # Repeat header row across pages (w:tblHeader on row 0)
+    try:
+        header_tr = table.rows[0]._tr.get_or_add_trPr()
+        header_tr.append(OxmlElement("w:tblHeader"))
+    except Exception:
+        pass
+
     for row_index, row in enumerate(rows):
+        # Do not split row across pages (w:cantSplit on each row)
+        try:
+            row_tr = table.rows[row_index]._tr.get_or_add_trPr()
+            row_tr.append(OxmlElement("w:cantSplit"))
+        except Exception:
+            pass
+
         for column in range(columns):
             cell = table.cell(row_index, column)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP

@@ -33,32 +33,32 @@ logger = logging.getLogger("citebolt.section_engine")
 VERIFIED_DATABASE_TABLES: list[dict[str, str]] = [
     {
         "name": "users",
-        "columns": "id, email",
+        "columns": "id, email, created_at",
         "purpose": "Stores registered user identity and email address.",
     },
     {
         "name": "otp_codes",
-        "columns": "id, email, code_hash",
+        "columns": "id, email, code_hash, expires_at, attempts, created_at",
         "purpose": "Manages time-sensitive one-time password verification tokens.",
     },
     {
         "name": "runs",
-        "columns": "id, user_id, topic, status, report_markdown",
+        "columns": "id, user_id, topic, title, report_type, status, report_markdown, sources_json, sources_count, word_count, token_count, cost_usd, elapsed_seconds, error_message, context, created_at, completed_at, length, target_words, outline_json, front_matter_json",
         "purpose": "Persists report generation workflows, outlines, and markdown artifacts.",
     },
     {
         "name": "templates",
-        "columns": "id, user_id, name, outline_json",
+        "columns": "id, user_id, name, outline_json, created_at",
         "purpose": "Stores predefined and custom report structural templates.",
     },
     {
         "name": "user_settings",
-        "columns": "user_id, theme",
+        "columns": "user_id, default_report_type, default_export_format, theme, notify_on_complete, created_at",
         "purpose": "Retains user preference settings including interface display theme.",
     },
     {
         "name": "contact_messages",
-        "columns": "id, email, message",
+        "columns": "id, name, email, subject, message, user_id, created_at",
         "purpose": "Captures user feedback and contact form submissions.",
     },
 ]
@@ -76,6 +76,19 @@ VERIFIED_SCHEMA_RELATIONSHIPS: list[str] = [
     "templates.user_id -> users.id",
     "user_settings.user_id -> users.id",
 ]
+
+# Verified database file name dynamically inspected from code:
+def get_verified_db_filename() -> str:
+    try:
+        from app.db import ENGINE_URL
+        if "sqlite:///" in ENGINE_URL:
+            from pathlib import Path
+            p = Path(ENGINE_URL.split("sqlite:///")[-1])
+            if p.name:
+                return p.name
+    except Exception:
+        pass
+    return "reports.db"
 
 # Verified API endpoints verified directly in main.py:
 VERIFIED_API_ENDPOINTS: list[str] = [
@@ -114,6 +127,139 @@ WORD_NUMBERS: dict[str, int] = {
     "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
     "eighteen": 18, "nineteen": 19, "twenty": 20, "twenty-five": 25, "twenty five": 25,
 }
+
+APPENDIX_B_GLOSSARY: list[dict[str, str]] = [
+    {
+        "term": "LLM",
+        "definition": "Large Language Model (foundation deep learning model trained on large text corpora for natural language reasoning and generation).",
+    },
+    {
+        "term": "Agent",
+        "definition": "Autonomous software entity that reasons, invokes tools, and collaborates across workflows.",
+    },
+    {
+        "term": "LangGraph",
+        "definition": "Multi-agent state orchestration framework based on state machines and directed cycles.",
+    },
+    {
+        "term": "FastAPI",
+        "definition": "High-performance Python web framework for asynchronous REST endpoints and Server-Sent Events.",
+    },
+    {
+        "term": "Tavily",
+        "definition": "Search engine API optimized for factual AI retrieval and web source extraction.",
+    },
+    {
+        "term": "SRS",
+        "definition": "Software Requirements Specification defining system functionality and constraints.",
+    },
+    {
+        "term": "HLD / LLD",
+        "definition": "High-Level Design and Low-Level Design architectural specifications.",
+    },
+    {
+        "term": "SSE",
+        "definition": "Server-Sent Events protocol for real-time progress streaming.",
+    },
+]
+
+
+def format_appendix_b_glossary() -> str:
+    rows = ["| Term | Definition |", "| :--- | :--- |"]
+    for item in APPENDIX_B_GLOSSARY:
+        rows.append(f"| **{item['term']}** | {item['definition']} |")
+    return "## Appendix B: Glossary\n\n" + "\n".join(rows)
+
+
+def sanitize_section_output(sec_md: str) -> str:
+    """Sanitize individual section LLM generation output (Run #6 fix).
+    
+    Strips code fences (closed or unclosed), markdown headings, markdown tables,
+    and any text appearing after the first heading-like line.
+    Returns plain paragraphs and bullets only.
+    """
+    if not sec_md:
+        return ""
+
+    # Strip leading/trailing code fences even if unclosed
+    cleaned = re.sub(r"^\s*```[a-zA-Z0-9_-]*\s*\n", "", sec_md.strip(), flags=re.MULTILINE)
+    cleaned = re.sub(r"\n\s*```\s*$", "", cleaned, flags=re.MULTILINE)
+
+    lines = cleaned.splitlines()
+    body_lines: list[str] = []
+
+    # If the first non-empty line starts with # (the section's own heading echo), skip it
+    first_non_empty_idx = -1
+    for i, ln in enumerate(lines):
+        if ln.strip():
+            first_non_empty_idx = i
+            break
+
+    start_idx = 0
+    if first_non_empty_idx != -1 and lines[first_non_empty_idx].strip().startswith("#"):
+        start_idx = first_non_empty_idx + 1
+
+    for line in lines[start_idx:]:
+        stripped = line.strip()
+        # Any text after the first heading-like line must be discarded
+        if stripped.startswith("#"):
+            break
+        # Strip code fences inside
+        if stripped.startswith("```"):
+            continue
+        # Strip markdown table lines
+        if stripped.startswith("|"):
+            continue
+        # Strip standalone footnote markers like *(...)*
+        if re.match(r"^\*\([^\)]*\)\*$", stripped):
+            continue
+        body_lines.append(line)
+
+    result = "\n".join(body_lines).strip()
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result
+
+
+def deduplicate_and_clean_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """De-duplicate sources by URL and arXiv ID, and strip leading '[arXiv id]' from titles."""
+    unique_sources: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    seen_arxiv: set[str] = set()
+
+    for s in sources:
+        u = str(s.get("url") or "").strip()
+        u_norm = u.lower().rstrip("/")
+
+        arxiv_id = ""
+        m_arxiv = re.search(r"arxiv\.org/(?:abs|pdf)/(\d+\.\d+)", u_norm)
+        if m_arxiv:
+            arxiv_id = m_arxiv.group(1)
+        else:
+            m_arxiv2 = re.search(r"(?:arxiv:?\s*|\[)(\d{4}\.\d{4,5})", str(s.get("title", "")), re.IGNORECASE)
+            if m_arxiv2:
+                arxiv_id = m_arxiv2.group(1)
+
+        if u_norm and u_norm in seen_urls:
+            continue
+        if arxiv_id:
+            if arxiv_id in seen_arxiv:
+                continue
+            seen_arxiv.add(arxiv_id)
+        if u_norm:
+            seen_urls.add(u_norm)
+
+        clean_s = dict(s)
+        raw_t = str(clean_s.get("title") or "Reference Source").strip()
+        clean_t = re.sub(
+            r"^\[(?:\d+\.\d+|arxiv:?\s*\d+\.\d+|[a-zA-Z\-]+(?:\.[a-zA-Z\-]+)?)\]\s*",
+            "",
+            raw_t,
+            flags=re.IGNORECASE,
+        ).strip()
+        clean_s["title"] = clean_t
+        unique_sources.append(clean_s)
+
+    return unique_sources
 
 
 def parse_count_mention(match_text: str) -> int | None:
@@ -306,7 +452,7 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     if db_tables:
         lines.append(f"Database Tables: {db_tables}")
     else:
-        formatted_tables = ", ".join(f"{t['name']}({t['columns']})" for t in VERIFIED_DATABASE_TABLES)
+        formatted_tables = ", ".join(t["name"] for t in VERIFIED_DATABASE_TABLES)
         lines.append(f"Database Tables: {formatted_tables}.")
     endpoints = fm.get("mainEndpoints", "").strip()
     if endpoints:
@@ -515,7 +661,7 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
             return True
         return False
 
-    for line in split_lines:
+    for line_idx, line in enumerate(split_lines):
         stripped = line.strip()
 
         ch_m = re.match(r"^#\s*Chapter\s+(\d+)", stripped, re.IGNORECASE)
@@ -598,8 +744,18 @@ def ensure_unique_figure_and_table_captions(md: str, is_short: bool = False) -> 
             tbl_idx += 1
             out_lines.append(f"{tbl_label}: {desc}")
             out_lines.append("")
-            out_lines.append("[Insert table here]")
-            out_lines.append("")
+            # Check if a markdown table follows in subsequent lines
+            has_table_following = False
+            for future_line in split_lines[line_idx + 1:line_idx + 6]:
+                f_str = future_line.strip()
+                if not f_str:
+                    continue
+                if f_str.startswith("|"):
+                    has_table_following = True
+                break
+            if not has_table_following:
+                out_lines.append("[Insert table here]")
+                out_lines.append("")
             continue
 
         if stripped == "[Insert table here]":
@@ -834,16 +990,29 @@ def is_dangling_fragment(s: str) -> bool:
     return False
 
 
-def clean_dangling_fragments_and_placeholders(text: str) -> str:
-    """Ensure placeholders never split sentences and clean up dangling fragments.
-    
-    1. Keeps only titled figure placeholders when doubled with bare ones.
-    2. Drops dangling fragments such as 'The Gantt chart in', 'CiteBolt utilizes.', 'Total effort depends on.'
-    3. Any paragraph with dangling fragments on either side of a placeholder becomes just the placeholder.
-    4. Placeholders are placed on their own line/paragraph and never sit in the middle of a paragraph.
-    """
+def _clean_single_section_dangling(text: str) -> str:
+    """Clean dangling fragments, isolate placeholders, and eliminate doubled placeholders within a single section."""
     if not text:
         return text
+
+    # Strip dangling N.M). leftover tokens like "3.1). 3.2). 3.3)." without corrupting "(see Fig. 7.2)"
+    def _strip_dangling_num(m: re.Match[str]) -> str:
+        prefix = m.group(1) or ""
+        if prefix and re.search(r"(?:Fig\.|Figure|Table)\s*$", prefix, re.IGNORECASE):
+            return m.group(0)
+        return prefix
+
+    text = re.sub(
+        r"((?:Fig\.|Figure|Table)\s*)?\b\d+\.\d+\)\.?",
+        _strip_dangling_num,
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # When a section contains both "No load testing..." and a placeholder, keep only one
+    if "no load testing" in text.lower():
+        text = re.sub(r"\[Add your [^\]]*load testing[^\]]*here\.?\]", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\[Add your [^\]]*here\.?\]", "", text, flags=re.IGNORECASE)
 
     # Deduplicate doubled figure placeholders
     text = re.sub(
@@ -900,6 +1069,11 @@ def clean_dangling_fragments_and_placeholders(text: str) -> str:
     paragraphs = text.split("\n\n")
     cleaned_paras: list[str] = []
 
+    # Check if section has substantial real prose text (>= 15 words)
+    non_placeholder_text = re.sub(r"\[Add (?:your|more)[^\]]+\]", "", text, flags=re.IGNORECASE)
+    non_placeholder_text = re.sub(r"^#+.*$", "", non_placeholder_text, flags=re.MULTILINE)
+    has_real_text = len(re.findall(r"\b\w+\b", non_placeholder_text)) >= 15
+
     for p in paragraphs:
         p_strip = p.strip()
         if not p_strip:
@@ -920,6 +1094,9 @@ def clean_dangling_fragments_and_placeholders(text: str) -> str:
                 marker = m_item.group(1)
                 body = m_item.group(2).strip()
 
+                if has_real_text and re.match(r"^\s*\[Add (?:your|more)[^\]]+\]\.?\s*$", body, re.IGNORECASE):
+                    continue
+
                 ph_m = re.search(r"(\[Add (?:your|more)[^\]]+\])", body, re.IGNORECASE)
                 if not ph_m:
                     if is_dangling_fragment(body):
@@ -930,9 +1107,11 @@ def clean_dangling_fragments_and_placeholders(text: str) -> str:
                     b = body[:ph_m.start()].strip()
                     a = body[ph_m.end():].strip()
                     if not b and not a:
-                        cleaned_items.append(f"{marker}{ph}")
+                        if not has_real_text:
+                            cleaned_items.append(f"{marker}{ph}")
                     elif is_dangling_fragment(b) or (a and is_dangling_fragment(a)):
-                        cleaned_items.append(f"{marker}{ph}")
+                        if not has_real_text:
+                            cleaned_items.append(f"{marker}{ph}")
                     else:
                         parts = []
                         if b:
@@ -959,7 +1138,8 @@ def clean_dangling_fragments_and_placeholders(text: str) -> str:
         after = p_strip[ph_match.end():].strip()
 
         if not before and not after:
-            cleaned_paras.append(ph)
+            if not has_real_text:
+                cleaned_paras.append(ph)
             continue
 
         before_dangling = is_dangling_fragment(before) if before else False
@@ -973,7 +1153,8 @@ def clean_dangling_fragments_and_placeholders(text: str) -> str:
                 valid_before = [s.strip() for s in sents if s.strip() and not is_dangling_fragment(s)]
             if valid_before:
                 cleaned_paras.append(" ".join(valid_before))
-            cleaned_paras.append(ph)
+            if not has_real_text:
+                cleaned_paras.append(ph)
             valid_after: list[str] = []
             if after:
                 sents_after = re.split(r"(?<=[.!?])\s+", after)
@@ -993,6 +1174,28 @@ def clean_dangling_fragments_and_placeholders(text: str) -> str:
     res = "\n\n".join(cleaned_paras).strip()
     res = re.sub(r"\n{3,}", "\n\n", res)
     return res
+
+
+def clean_dangling_fragments_and_placeholders(text: str) -> str:
+    """Ensure placeholders never split sentences and clean up dangling fragments.
+    
+    1. Keeps only titled figure placeholders when doubled with bare ones.
+    2. Drops dangling fragments such as 'The Gantt chart in', 'CiteBolt utilizes.', 'Total effort depends on.'
+    3. Any paragraph with dangling fragments on either side of a placeholder becomes just the placeholder.
+    4. Placeholders are placed on their own line/paragraph and never sit in the middle of a paragraph.
+    5. Strips stray '3.1). 3.2). 3.3).' leftover numbering tokens without corrupting '(see Fig. 7.2)'.
+    6. Removes generic '[Add your ... here.]' when the section already contains real text (>=15 words).
+    7. When a section contains both 'No load testing...' and a placeholder, keeps only one.
+    """
+    if not text:
+        return text
+
+    # Split text into sections by heading lines
+    heading_pattern = r"(?:\n|^)(?=#{1,4}\s+)"
+    parts = [p for p in re.split(heading_pattern, text) if p]
+    if len(parts) > 1:
+        return "\n\n".join(_clean_single_section_dangling(p) for p in parts)
+    return _clean_single_section_dangling(text)
 
 
 REAL_DB_TABLES = {"users", "otp_codes", "runs", "templates", "user_settings", "contact_messages"}
@@ -1148,6 +1351,7 @@ def filter_grounded_college_section(
     heading_prefix: str = "##",
     is_college: bool = True,
     min_words: int = 2,
+    chapter_has_stack_stated: list[bool] | None = None,
 ) -> str:
     """Post-generation grounding filter applied at the sentence level for college reports.
     
@@ -1195,14 +1399,19 @@ def filter_grounded_college_section(
 System maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
 
     if re.search(r"^10\.6\b", sec_title):
+        db_file = get_verified_db_filename()
         return f"""{heading_prefix} {sec_title}
 
-Database backup and recovery is conducted by creating direct filesystem copies of the SQLite database file (`reports.db`). In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring ACID transaction integrity."""
+Database backup and recovery is conducted by creating direct filesystem copies of the SQLite database file (`{db_file}`). In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
 
     if re.search(r"^10\.7\b", sec_title):
         return f"""{heading_prefix} {sec_title}
 
 Deployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
+
+    # Chapter 2 must be 100% placeholders unless the user supplied related-work text
+    if actual_ch_num == 2 and not ("relatedwork" in facts_lower or "related work" in facts_lower):
+        return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
 
     if not sec_md:
         return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
@@ -1297,14 +1506,24 @@ Deployment challenges primarily center on managing external API rate limits and 
                 ]):
                     continue
 
-            # Whitelist filter: drop sentences containing banned terms unless in facts (Task 2 Item 4)
+            # Whitelist filter: drop sentences containing banned terms unless in facts (Task 2 Item 4 & Run #6)
             banned_terms = [
                 "config.yaml", "returns 429", "return 429", "ci runs", "ci run",
                 "hashes", "state-diff", "markdown patches", "markdown patch",
                 "sprint", "sprints", "middleware", "grant proposals", "grant proposal",
                 "faculty advisors", "faculty advisor",
+                "autogpt", "auto-gpt", "babyagi", "baby-agi", "scholarai", "scholar-ai",
+                "three-month", "3-month",
+                "work-streams", "work streams", "workstreams", "work-stream", "work stream", "workstream",
+                "secure-by-design", "secure by design", "most studies",
             ]
             if any(bt in s_low for bt in banned_terms if bt not in facts_lower):
+                continue
+            if re.search(r"\bcrewai\b|\bcrew-ai\b", s_low) and "crewai" not in facts_lower:
+                continue
+            if re.search(r"\bacid\b", s_low):
+                continue
+            if any(claim in s_low for claim in ["correct agent sequencing", "agent sequencing", "citation formatting", "template rendering"]):
                 continue
             if re.search(r"\bload\s+testing\b", s_low) and "load test" not in facts_lower:
                 continue
@@ -1338,6 +1557,17 @@ Deployment challenges primarily center on managing external API rate limits and 
             if any(k in norm_sec for k in ["8.5", "8.6", "test case", "test plan"]):
                 if any(x in s_low for x in ["14 unit tests", "14 tests", "mocked llm and mocked search"]):
                     continue
+
+            # Repetition: state stack/pipeline summary at most once per chapter
+            is_stack_summary = (
+                sum(1 for k in ["fastapi", "react", "sqlite", "langgraph", "groq", "tavily"] if k in s_low) >= 3
+                or all(k in s_low for k in ["research", "analysis", "writer"])
+            )
+            if is_stack_summary:
+                if chapter_has_stack_stated and chapter_has_stack_stated[0]:
+                    continue
+                if chapter_has_stack_stated is not None:
+                    chapter_has_stack_stated[0] = True
 
             # Run-command stripping at sentence level for 1.1-1.7 and 5.1
             if is_intro_chapter or norm_sec.startswith("5.1"):
@@ -1707,22 +1937,46 @@ def format_front_matter_section(
         return "\n\n".join(lines).strip()
 
     if "acknowledgement" in norm:
-        lines = [
-            "## Acknowledgements\n\n"
-            "We take immense pride and pleasure in presenting this project report. "
-            "First and foremost, we express our profound gratitude to our project guide"
-            + (f", **{guide_disp}**" if guide_raw else "")
-            + ", whose relentless encouragement, constructive criticism, and expert technical mentorship guided us through every stage of this work.\n\n"
-            "We convey our sincere thanks to the Project Coordinator"
-            + (f", **{coord}**" if coord else "")
-            + f", and to the Head of Department, Department of {dept_disp}"
-            + ", for providing excellent laboratory infrastructure, technical facilities, and continuous administrative support.\n\n"
-            "We are equally indebted to the Principal / Dean"
-            + (f", **{dean}**" if dean else "")
-            + f", {univ_disp}"
-            + ", for fostering an academic environment that champions innovation, quality engineering, and practical research.\n\n"
-            "Finally, we extend our heartfelt appreciation to our fellow peers, faculty members, and our families, whose patience, understanding, and unwavering moral support made the successful completion of this project possible."
+        named_members = [
+            m for m in members
+            if isinstance(m, dict) and m.get("name", "").strip()
         ]
+        team_size_val = fm.get("teamSize", "").strip()
+        is_single_member = (len(named_members) <= 1 and len(members) <= 1 and team_size_val in ("", "1"))
+        if is_single_member:
+            lines = [
+                "## Acknowledgements\n\n"
+                "I take immense pride and pleasure in presenting this project report. "
+                "First and foremost, I express my profound gratitude to my project guide"
+                + (f", **{guide_disp}**" if guide_raw else "")
+                + ", whose relentless encouragement, constructive criticism, and expert technical mentorship guided me through every stage of this work.\n\n"
+                "I convey my sincere thanks to the Project Coordinator"
+                + (f", **{coord}**" if coord else "")
+                + f", and to the Head of Department, Department of {dept_disp}"
+                + ", for providing excellent laboratory infrastructure, technical facilities, and continuous administrative support.\n\n"
+                "I am equally indebted to the Principal / Dean"
+                + (f", **{dean}**" if dean else "")
+                + f", {univ_disp}"
+                + ", for fostering an academic environment that champions innovation, quality engineering, and practical research.\n\n"
+                "Finally, I extend my heartfelt appreciation to my fellow peers, faculty members, and my family, whose patience, understanding, and unwavering moral support made the successful completion of this project possible."
+            ]
+        else:
+            lines = [
+                "## Acknowledgements\n\n"
+                "We take immense pride and pleasure in presenting this project report. "
+                "First and foremost, we express our profound gratitude to our project guide"
+                + (f", **{guide_disp}**" if guide_raw else "")
+                + ", whose relentless encouragement, constructive criticism, and expert technical mentorship guided us through every stage of this work.\n\n"
+                "We convey our sincere thanks to the Project Coordinator"
+                + (f", **{coord}**" if coord else "")
+                + f", and to the Head of Department, Department of {dept_disp}"
+                + ", for providing excellent laboratory infrastructure, technical facilities, and continuous administrative support.\n\n"
+                "We are equally indebted to the Principal / Dean"
+                + (f", **{dean}**" if dean else "")
+                + f", {univ_disp}"
+                + ", for fostering an academic environment that champions innovation, quality engineering, and practical research.\n\n"
+                "Finally, we extend our heartfelt appreciation to our fellow peers, faculty members, and our families, whose patience, understanding, and unwavering moral support made the successful completion of this project possible."
+            ]
         return "\n".join(lines).strip()
 
     if "abstract" in norm:
@@ -1775,19 +2029,7 @@ def format_front_matter_section(
         )
 
     if "appendix b" in norm or "glossary" in norm:
-        return (
-            "## Appendix B: Glossary\n\n"
-            "| Term | Definition |\n"
-            "| :--- | :--- |\n"
-            "| **LLM** | Large Language Model (foundation deep learning model trained on large text corpora for natural language reasoning and generation). |\n"
-            "| **Agent** | Autonomous software entity that reasons, invokes tools, and collaborates across workflows. |\n"
-            "| **LangGraph** | Multi-agent state orchestration framework based on state machines and directed cycles. |\n"
-            "| **FastAPI** | High-performance Python web framework for asynchronous REST endpoints and Server-Sent Events. |\n"
-            "| **Tavily** | Search engine API optimized for factual AI retrieval and web source extraction. |\n"
-            "| **SRS** | Software Requirements Specification defining system functionality and constraints. |\n"
-            "| **HLD / LLD** | High-Level Design and Low-Level Design architectural specifications. |\n"
-            "| **SSE** | Server-Sent Events protocol for real-time progress streaming. |"
-        )
+        return format_appendix_b_glossary()
 
     if "references" in norm:
         return None  # Compiled automatically from cited sources
@@ -2258,6 +2500,45 @@ Keywords: [5-7 comma-separated domain keywords]"""
         m = re.search(r"chapter\s+(\d+)", ch_title.lower())
         actual_ch_num = int(m.group(1)) if m else ch_idx
 
+        # Chapter 2 must be 100% placeholders unless user supplied related-work text
+        has_related_work_facts = bool((front_matter or {}).get("relatedWork", "").strip())
+        if actual_ch_num == 2 and not has_related_work_facts:
+            rendered_subsections = []
+            for s_idx, sec in ch_sections:
+                sec_title = clean_title(str(sec.get("title", "")))
+                sec_lvl = int(sec.get("level", 1))
+                heading_prefix = "#" * min(3, sec_lvl + 1)
+                clean_sec_title = re.sub(r"^\d+(?:\.\d+)*\s*", "", sec_title).strip()
+                sec_md = f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
+                rendered_subsections.append((s_idx, sec_md))
+                persist_section_to_db(s_idx, sec_md)
+                record_section_progress(sec_title)
+                with placeholder_lock:
+                    placeholder_sections.append({
+                        "index": s_idx,
+                        "title": sec_title,
+                        "reason": "empty_llm_output (no related work provided)",
+                        "chapter": actual_ch_num,
+                    })
+                emit({
+                    "type": "section_fallback",
+                    "section_index": s_idx,
+                    "section_title": sec_title,
+                    "reason": "empty_llm_output (no related work provided)",
+                })
+            return ch_idx, rendered_subsections, []
+
+        # Move Chapter Summary to the end of its chapter
+        summary_secs = [
+            item for item in ch_sections
+            if "summary" in item[1].get("title", "").lower()
+            and not any(k in item[1].get("title", "").lower() for k in ["executive summary", "abstract"])
+        ]
+        non_summary_secs = [item for item in ch_sections if item not in summary_secs]
+        ch_sections = non_summary_secs + summary_secs
+
+        chapter_has_stack_stated = [False]
+
         # Check if entire chapter is already completed (for resume)
         all_ch_done = all(
             sections[s_idx].get("completed") and sections[s_idx].get("content")
@@ -2520,6 +2801,7 @@ The CiteBolt system is deployed locally on a single machine utilizing a FastAPI 
                 f"- Start directly with the section heading: '{heading_prefix} {sec_title}'. Do NOT output a document title or preamble.",
                 "- Write thoroughly and in depth to reach approximately the target word count.",
                 "- Write in clean, professional plain ASCII text (straight quotes, normal hyphens).",
+                "- Do not repeat the stack summary; write only about this section's topic.",
                 f"- Numbering: format figure captions strictly on their own line as 'Fig. {actual_ch_num}.N: [Description]' and table captions as 'Table {actual_ch_num}.N: [Description]'. Refer to them as 'Fig. {actual_ch_num}.N' and 'Table {actual_ch_num}.N' in text.",
                 f"- Diagrams: Where a diagram is needed (architecture, ERD, sequence, flowchart, Gantt), insert a clean placeholder on its own line: '[Insert diagram here: Fig. {actual_ch_num}.N - Description]'. Do NOT use '>' or ASCII boxes.",
                 "- Do NOT generate a Sources or References section; that will be compiled at the end.",
@@ -2747,6 +3029,13 @@ Continue:"""
                     sec_md = ""
                     time.sleep(1.5 * attempt)
 
+            if sec_md and sec_md.strip():
+                clean_body = sanitize_section_output(sec_md)
+                if clean_body:
+                    sec_md = f"{heading_prefix} {sec_title}\n\n{clean_body}"
+                else:
+                    sec_md = ""
+
             if not sec_md or not sec_md.strip():
                 clean_sec_title = re.sub(r"^\d+(?:\.\d+)*\s*", "", sec_title).strip()
                 sec_md = f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
@@ -2778,6 +3067,7 @@ Continue:"""
                 heading_prefix=heading_prefix,
                 is_college=True,
                 min_words=25 if is_thin_sec else 2,
+                chapter_has_stack_stated=chapter_has_stack_stated,
             )
             sec_md = normalize_college_captions_and_placeholders(sec_md)
 
@@ -2933,6 +3223,18 @@ Continue:"""
         final_sources = academic_sources
     else:
         final_sources = academic_sources if academic_sources else filtered_sources
+
+    final_sources = deduplicate_and_clean_sources(final_sources)
+
+    # Filter to only sources cited in text if citations exist
+    cited_nums = set(int(m) for m in re.findall(r"\[(\d+)\]", renumbered_markdown))
+    if cited_nums:
+        cited_sources = [
+            s for idx, s in enumerate(final_sources, start=1)
+            if idx in cited_nums or s.get("number") in cited_nums
+        ]
+        if cited_sources:
+            final_sources = cited_sources
 
     # Format IEEE bibliography using only real sources returned by search
     ieee_refs = ["## References\n"]

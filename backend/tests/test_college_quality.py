@@ -869,8 +869,8 @@ This chapter introduces the engineering background and system motivation.
         # In TOC page, check that Chapter 1 is listed
         toc_text = reader.pages[toc_physical_page - 1].extract_text()
         self.assertIn("Chapter 1 Introduction", toc_text)
-        # Verify Certificate and Signatures are NOT in the TOC
-        self.assertNotIn("Certificate", toc_text)
+        # Verify Certificate is in TOC while Signatures is NOT in the TOC
+        self.assertIn("Certificate", toc_text)
         self.assertNotIn("Signatures", toc_text)
         # Verify List of Figures and List of Tables ARE in the TOC
         self.assertIn("List of Figures", toc_text)
@@ -1645,7 +1645,7 @@ Numbered deployment steps:
         self.assertIn("Table 7.1: Database tables", sec_73)
         self.assertIn("Table 7.1 describes each database table", sec_73)
         self.assertNotIn("[Insert table here]", sec_73)
-        self.assertIn("| users | id, email |", sec_73)
+        self.assertIn("| users | id, email, created_at |", sec_73)
 
         # B. List of Tables matches Table 7.1
         lot = format_front_matter_section("List of Tables", "CiteBolt", fm)
@@ -1977,6 +1977,176 @@ Numbered deployment steps:
         filtered = filter_grounded_college_section("6.6 Team Structure", "Some team text", facts)
         self.assertIn("The project was developed by a single student.", filtered)
         self.assertNotIn("[Add", filtered)
+
+    def test_section_output_sanitiser_run6_junk(self):
+        """Item 1: Feed Run #6 junk string to sanitize_section_output and verify no headings, code fences, or tables remain."""
+        run6_junk = (
+            "```markdown\n"
+            "The installation process requires configuring Python 3.12 and dependencies.\n\n"
+            "Execute the Uvicorn command to launch backend services.\n\n"
+            "### 10.4 User Guide\n"
+            "This user guide outlines the operation of the web dashboard.\n\n"
+            "# Chapter 11 Conclusion\n"
+            "The system delivers reliable automation.\n\n"
+            "## References\n"
+            "[1] Fake Reference, 2024.\n\n"
+            "| Component | Status |\n"
+            "| :--- | :--- |\n"
+            "| Server | Running |\n\n"
+            "*(Attach copies of logs)*\n"
+            "```"
+        )
+        clean = section_engine.sanitize_section_output(run6_junk)
+        self.assertIn("The installation process requires configuring Python", clean)
+        self.assertIn("Execute the Uvicorn command", clean)
+        self.assertNotIn("#", clean)
+        self.assertNotIn("```", clean)
+        self.assertNotIn("|", clean)
+        self.assertNotIn("10.4", clean)
+        self.assertNotIn("Chapter 11", clean)
+        self.assertNotIn("References", clean)
+
+    def test_table_7_1_real_columns_and_docx_table_header(self):
+        """Item 2: Real columns from models.py in Table 7.1, repeat header and no-split in DOCX."""
+        # 1. Real columns
+        tables = section_engine.VERIFIED_DATABASE_TABLES
+        table_dict = {t["name"]: t["columns"] for t in tables}
+        self.assertEqual(table_dict["users"], "id, email, created_at")
+        self.assertIn("created_at", table_dict["otp_codes"])
+        self.assertIn("token_count", table_dict["runs"])
+        self.assertIn("created_at", table_dict["templates"])
+        self.assertIn("notify_on_complete", table_dict["user_settings"])
+        self.assertIn("subject", table_dict["contact_messages"])
+
+        # 2. DOCX _add_table repeat header and cantSplit
+        import docx
+        from app.export import _add_table
+        doc = docx.Document()
+        rows = [["Table", "Columns", "Purpose"], ["users", "id, email, created_at", "User account"]]
+        _add_table(doc, rows)
+        self.assertEqual(len(doc.tables), 1)
+        tbl = doc.tables[0]
+        # Verify row 0 has tblHeader
+        trPr0 = tbl.rows[0]._tr.get_or_add_trPr()
+        self.assertTrue(any("tblHeader" in c.tag for c in trPr0))
+        # Verify each row has cantSplit
+        for row in tbl.rows:
+            trPr = row._tr.get_or_add_trPr()
+            self.assertTrue(any("cantSplit" in c.tag for c in trPr))
+
+    def test_stray_fragments_and_chapter_summary_at_end(self):
+        """Item 3: Remove dangling N.M)., keep Fig. 7.2), drop placeholder with real text or 'no load testing'."""
+        # 1. 3.1). 3.2). 3.3). removal while preserving (see Fig. 7.2)
+        text = "System components are indexed 3.1). 3.2). 3.3). as illustrated below (see Fig. 7.2)."
+        cleaned = section_engine.clean_dangling_fragments_and_placeholders(text)
+        self.assertIn("see Fig. 7.2", cleaned)
+        self.assertNotIn("3.1).", cleaned)
+        self.assertNotIn("3.2).", cleaned)
+        self.assertNotIn("3.3).", cleaned)
+
+        # 2. 'no load testing' drops placeholder
+        lt_text = "No load testing was conducted for this release.\n\n[Add your load testing results here.]"
+        cleaned_lt = section_engine.clean_dangling_fragments_and_placeholders(lt_text)
+        self.assertIn("No load testing was conducted", cleaned_lt)
+        self.assertNotIn("[Add your", cleaned_lt)
+
+        # 3. Real text (>=15 words) drops generic standalone placeholder
+        real_text = (
+            "The system architecture integrates a FastAPI backend with a SQLite persistent database "
+            "and a React frontend interface to provide seamless execution workflows.\n\n"
+            "[Add your architecture details here.]"
+        )
+        cleaned_real = section_engine.clean_dangling_fragments_and_placeholders(real_text)
+        self.assertIn("FastAPI backend", cleaned_real)
+        self.assertNotIn("[Add your architecture details here.]", cleaned_real)
+
+        # 4. Pure placeholder without real text is preserved
+        pure_ph = "## 2.1 Core Services\n\n[Add your Core Services here.]"
+        cleaned_pure = section_engine.clean_dangling_fragments_and_placeholders(pure_ph)
+        self.assertIn("[Add your Core Services here.]", cleaned_pure)
+
+    def test_grounding_banned_tools_and_acid_and_chapter_2_placeholders(self):
+        """Item 4: Whitelist drops banned tools/terms, Chapter 2 is 100% placeholders without relatedWork, dynamic db filename."""
+        facts = "Project Facts: FastAPI backend with SQLite persistence."
+
+        # Banned terms: AutoGPT, BabyAGI, ScholarAI, CrewAI, 3-month, work-streams, ACID, secure-by-design, most studies
+        banned_sentences = [
+            "We compare our approach against AutoGPT and BabyAGI systems.",
+            "ScholarAI was used to survey related literature.",
+            "The multi-agent workflow was inspired by CrewAI orchestrations.",
+            "The project was executed over a three-month development cycle.",
+            "Development was partitioned into distinct work-streams.",
+            "Transactions are committed ensuring strict ACID consistency.",
+            "The service adheres to secure-by-design architectural paradigms.",
+            "Most studies indicate that retrieval augmentation enhances relevance.",
+            "Unit tests confirm correct agent sequencing and citation formatting.",
+        ]
+        for s in banned_sentences:
+            sec_md = f"## 4.5 System Details\n\n{s}\n\nThe system runs locally on FastAPI."
+            filtered = filter_grounded_college_section("4.5 System Details", sec_md, facts)
+            self.assertNotIn(s, filtered, f"Sentence '{s}' was unexpectedly retained.")
+
+        # Chapter 2 without relatedWork: 100% placeholders
+        ch2_filtered = filter_grounded_college_section("2.1 Survey of Approaches", "Some external text.", facts)
+        self.assertIn("[Add your Survey of Approaches here.]", ch2_filtered)
+        self.assertNotIn("Some external text.", ch2_filtered)
+
+        # Dynamic db filename
+        db_name = section_engine.get_verified_db_filename()
+        sec_106 = filter_grounded_college_section("10.6 Backup and Recovery", "", facts)
+        self.assertIn(f"`{db_name}`", sec_106)
+        self.assertNotIn("ACID", sec_106)
+
+    def test_acknowledgements_singular_i_for_single_student(self):
+        """Item 6: Acknowledgements uses 'I' and 'my' for single-member team, 'We' and 'our' for multi-member."""
+        # Single member team
+        fm_single = {
+            "projectTitle": "CiteBolt",
+            "teamSize": "1",
+            "teamMembers": [{"name": "Solo Student", "prn": "1234"}],
+            "guide": "Dr. Mentoring Guide",
+        }
+        ack_single = format_front_matter_section("Acknowledgements", "CiteBolt", fm_single)
+        self.assertIn("I take immense pride and pleasure", ack_single)
+        self.assertIn("gratitude to my project guide", ack_single)
+        self.assertNotIn("We take immense pride", ack_single)
+
+        # Multi-member team
+        fm_multi = {
+            "projectTitle": "CiteBolt",
+            "teamSize": "3",
+            "teamMembers": [
+                {"name": "Student One", "prn": "1111"},
+                {"name": "Student Two", "prn": "2222"},
+            ],
+            "guide": "Dr. Mentoring Guide",
+        }
+        ack_multi = format_front_matter_section("Acknowledgements", "CiteBolt", fm_multi)
+        self.assertIn("We take immense pride and pleasure", ack_multi)
+        self.assertIn("gratitude to our project guide", ack_multi)
+
+    def test_references_dedup_arxiv_id_and_strip_prefix(self):
+        """Item 7: Deduplicate sources by URL and arXiv ID, strip leading [arXiv id] from title, structured Appendix B."""
+        raw_sources = [
+            {"title": "[arXiv:2305.18290] Direct Preference Optimization", "url": "https://arxiv.org/abs/2305.18290"},
+            {"title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model", "url": "https://arxiv.org/pdf/2305.18290.pdf"},
+            {"title": "[2305.18290] DPO Paper Duplicate", "url": "https://example.com/dpo"},
+            {"title": "FastAPI Documentation", "url": "https://fastapi.tiangolo.com/"},
+            {"title": "FastAPI Docs Copy", "url": "https://fastapi.tiangolo.com"},
+        ]
+        deduped = section_engine.deduplicate_and_clean_sources(raw_sources)
+        # Should retain exactly 1 arXiv entry and 1 FastAPI entry
+        self.assertEqual(len(deduped), 2)
+        # Title prefix [arXiv:2305.18290] should be stripped
+        self.assertFalse(deduped[0]["title"].startswith("["))
+        self.assertEqual(deduped[0]["title"], "Direct Preference Optimization")
+
+        # Structured Appendix B Glossary
+        glossary_md = format_front_matter_section("Appendix B: Glossary", "CiteBolt", {})
+        self.assertIn("## Appendix B: Glossary", glossary_md)
+        self.assertIn("| **LLM** |", glossary_md)
+        self.assertIn("| **FastAPI** |", glossary_md)
+        self.assertIn("| **LangGraph** |", glossary_md)
 
 
 if __name__ == "__main__":
