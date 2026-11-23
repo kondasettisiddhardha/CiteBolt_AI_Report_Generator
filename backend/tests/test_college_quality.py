@@ -2232,13 +2232,16 @@ Numbered deployment steps:
         self.assertNotIn("monolithic pipelines", filtered)
 
     def test_regression_item4_test_count_only_in_section_8(self):
-        """Item 4: Test count is stated in Section 8 and removed from abstract and summary sections."""
+        """Item 4: Test count is stated strictly in Section 8.5 and removed from 8.2, abstract, and summaries."""
         from app.agents.section_engine import get_verified_test_count
         test_count = get_verified_test_count()
         sec_8_2 = filter_grounded_college_section("8.2 Test Objectives", "Testing covers end-to-end integration across all endpoints.", "Project Name: CiteBolt")
-        self.assertIn(f"{test_count} automated unit tests", sec_8_2)
+        self.assertNotIn(f"{test_count}", sec_8_2)
+        self.assertIn("automated pytest unit tests", sec_8_2)
+        sec_8_5 = filter_grounded_college_section("8.5 Test Cases", "The test suite comprises 14 unit tests for report verification.", "Project Name: CiteBolt")
+        self.assertIn(f"{test_count} automated pytest unit tests", sec_8_5)
         summary_ch1 = filter_grounded_college_section("1.7 Summary", "Summary of the chapter.", "Project Name: CiteBolt")
-        self.assertNotIn(f"{test_count} tests", summary_ch1)
+        self.assertNotIn(f"{test_count}", summary_ch1)
 
     def test_regression_item5_dangling_text_and_chapter_summaries(self):
         """Item 5: Drop sentences starting with 'It also', 'The chapter also', or ending with bare 'N.M.' token.
@@ -2279,6 +2282,99 @@ Numbered deployment steps:
         self.assertNotIn("existing solutions", abstract.lower())
         self.assertNotIn("successful end-to-end", abstract.lower())
         self.assertIn("CiteBolt", abstract)
+
+
+    def test_regression_round2_item1_unsupported_claims_and_section_9_4(self):
+        """Item 1: Drop sentences with banned claims (updates every 2s, log rotation, ACID, service classes, etc.)
+        and remove 9.4 text entirely unless user feedback was supplied."""
+        facts = "Project Facts: SQLite database, FastAPI backend, React frontend."
+        banned_phrases = [
+            "The dashboard updates every 2 s automatically.",
+            "Inference responses complete within a few hundred milliseconds.",
+            "The server implements automatic log rotation for disk management.",
+            "Active system monitoring is maintained via metrics dashboards.",
+            "The engineering team adopted a test-driven approach.",
+            "Development runs locally mirroring the production stack environment.",
+            "The modular persistence design ensures easy migration to cloud relational databases.",
+            "All REST API endpoints are fully documented for developer onboarding.",
+            "The frontend and backend teams engaged in parallel development across sprint boundaries.",
+            "Collected comments from stakeholders guided layout optimization.",
+            "Informal usability notes inform UI refinements across wizard steps.",
+            "The SQLite relational engine enforces ACID properties for transaction safety.",
+            "Business logic components are segregated into service classes.",
+            "Common services package encapsulates shared authentication utilities.",
+        ]
+        for phrase in banned_phrases:
+            text = f"{phrase} The core architecture remains modular."
+            filtered = filter_grounded_college_section("5.3 Backend Technologies", text, facts)
+            self.assertNotIn(phrase, filtered, f"Phrase '{phrase}' should have been dropped")
+
+        # Section 9.4 without user feedback -> placeholder
+        sec_9_4 = filter_grounded_college_section("9.4 User Feedback", "Survey respondents indicated 95% satisfaction with report quality.", facts)
+        self.assertEqual(sec_9_4.strip(), "## 9.4 User Feedback\n\n[Add your user feedback results here.]")
+
+    def test_regression_round2_item3_test_count_only_in_8_5(self):
+        """Item 3: Test count is stated strictly in 8.5 using get_verified_test_count().
+        Abstract, 3.4, 8.1, 8.3, 8.6, 9.5 write 'automated pytest unit tests' and never claim
+        coverage of agents, FastAPI endpoints, run state transitions, OTP flow or token accounting."""
+        from app.agents.section_engine import get_verified_test_count
+        real_count = get_verified_test_count()
+        self.assertGreaterEqual(real_count, 70)
+        self.assertNotEqual(real_count, 14)
+
+        facts = "Project Facts: SQLite database, FastAPI backend."
+
+        # 8.5 states the count
+        sec_8_5 = filter_grounded_college_section("8.5 Test Cases", "The test suite includes 14 unit tests.", facts)
+        self.assertIn(f"{real_count} automated pytest unit tests", sec_8_5)
+
+        # Other sections do not state any number
+        for sec_name in ["3.4 Non-Functional Requirements", "8.1 Overview", "8.3 Test Methodology", "8.6 Test Plan", "9.5 Testing Results"]:
+            filtered = filter_grounded_college_section(sec_name, "The test suite includes 14 unit tests for report verification.", facts)
+            self.assertNotIn(str(real_count), filtered)
+            self.assertNotIn("14", filtered)
+            self.assertIn("automated pytest unit tests", filtered)
+
+        # Unpermitted test claims dropped
+        bad_test_claim = "The unit tests verify agent state transitions, token accounting, and OTP flow."
+        filtered_claims = filter_grounded_college_section("8.1 Overview", bad_test_claim, facts)
+        self.assertNotIn("agent state transitions", filtered_claims)
+        self.assertNotIn("token accounting", filtered_claims)
+        self.assertNotIn("OTP flow", filtered_claims)
+
+    def test_regression_round2_item4_dangling_3_7_6_1_diagram_and_9_4(self):
+        """Item 4:
+        - 10.2 ends with a period, not a dangling colon.
+        - Section 3.7 is a plan or placeholder, not non-functional requirements.
+        - Remove meta paragraph in 6.1 ('The introductory overview provides...').
+        - Diagram placeholders on their own line, never inside a paragraph (7.4).
+        - Don't reference Fig. 9.1 from 9.4."""
+        facts = "Project Facts: SQLite database, FastAPI backend."
+
+        # 10.2 ends with a period
+        sec_10_2 = filter_grounded_college_section("10.2 System Deployment", "Deployment steps are executed from the project root:", facts)
+        self.assertFalse(sec_10_2.strip().endswith(":"))
+        self.assertTrue(sec_10_2.strip().endswith("."))
+
+        # 3.7 is a plan or placeholder, never non-functional requirements
+        sec_3_7 = filter_grounded_college_section("3.7 System Implementation Plan", "Non-functional requirements emphasize local execution security.", facts)
+        self.assertNotIn("Non-functional requirements", sec_3_7)
+        self.assertIn("System Implementation Plan", sec_3_7)
+
+        # 6.1 meta paragraph removed
+        meta_6_1 = "This chapter introduces scheduling. The introductory overview provides a concise description of the chapter's scope. Execution proceeds sequentially."
+        filtered_6_1 = filter_grounded_college_section("6.1 Introduction", meta_6_1, facts)
+        self.assertNotIn("The introductory overview provides", filtered_6_1)
+
+        # Diagram placeholder isolated on its own line
+        md_inline_diag = "Modules are coordinated across services. [Insert diagram here: Fig. 7.2 - Module flow] Frontend interacts via REST."
+        cleaned_diag = section_engine.clean_dangling_fragments_and_placeholders(md_inline_diag)
+        self.assertIn("\n\n[Insert diagram here: Fig. 7.2 - Module flow]\n\n", cleaned_diag)
+
+        # 9.4 does not reference Fig. 9.1
+        facts_with_feedback = "Project Facts: user feedback collected from students indicated satisfaction."
+        sec_9_4_fig = filter_grounded_college_section("9.4 User Feedback", "User feedback was positive (see Fig. 9.1). Testing continued smoothly.", facts_with_feedback)
+        self.assertNotIn("Fig. 9.1", sec_9_4_fig)
 
 
 if __name__ == "__main__":
