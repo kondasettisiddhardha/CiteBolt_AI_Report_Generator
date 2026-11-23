@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
-export type RunStatus = "queued" | "running" | "completed" | "completed_with_warnings" | "failed";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_warnings"
+  | "failed"
+  | "interrupted"
+  | "cancelled";
 
 export interface RunItem {
   id: string;

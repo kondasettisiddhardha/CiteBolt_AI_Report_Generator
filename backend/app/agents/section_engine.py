@@ -177,6 +177,33 @@ def format_appendix_b_glossary() -> str:
     return "## Appendix B: Glossary\n\n" + "\n".join(rows)
 
 
+def normalize_unicode_punctuation(text: str) -> str:
+    """Convert Unicode hyphens, dashes, spaces, and typographic quotes to ASCII equivalents."""
+    if not text:
+        return ""
+    # Hyphens and dashes: U+2010 (hyphen), U+2011 (non-breaking hyphen), U+2012 (figure dash),
+    # U+2013 (en dash), U+2014 (em dash), U+2015 (horizontal bar)
+    t = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015]", "-", text)
+    # Quotes: U+2018, U+2019, U+201a, U+201b, U+2032
+    t = re.sub(r"[\u2018\u2019\u201a\u201b\u2032]", "'", t)
+    # Double quotes: U+201c, U+201d, U+201e, U+201f, U+2033, U+00ab, U+00bb
+    t = re.sub(r"[\u201c\u201d\u201e\u201f\u2033\u00ab\u00bb]", '"', t)
+    # Non-breaking spaces: U+00a0, U+202f
+    t = re.sub(r"[\u00a0\u202f]", " ", t)
+    return t
+
+
+NUMBER_WORDS_RE = (
+    r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+    r"twenty|thirty|forty|fourty|fifty|sixty|seventy|eighty|ninety|"
+    r"hundred|\d+)"
+    r"(?:-(?:zero|one|two|three|four|five|six|seven|eight|nine|"
+    r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+    r"twenty|thirty|forty|fourty|fifty|sixty|seventy|eighty|ninety|hundred|\d+))?"
+)
+
+
 def sanitize_section_output(sec_md: str) -> str:
     """Sanitize individual section LLM generation output (Run #6 fix).
     
@@ -186,6 +213,8 @@ def sanitize_section_output(sec_md: str) -> str:
     """
     if not sec_md:
         return ""
+
+    sec_md = normalize_unicode_punctuation(sec_md)
 
     # Strip leading/trailing code fences even if unclosed
     cleaned = re.sub(r"^\s*```[a-zA-Z0-9_-]*\s*\n", "", sec_md.strip(), flags=re.MULTILINE)
@@ -266,6 +295,55 @@ def deduplicate_and_clean_sources(sources: list[dict[str, Any]]) -> list[dict[st
         unique_sources.append(clean_s)
 
     return unique_sources
+
+
+def format_references_section(sources: list[dict[str, Any]] | None) -> str:
+    """Format academic references in IEEE style.
+    
+    Only keeps arXiv/journal/conference sources. Excludes non-academic web pages
+    (LinkedIn, Langflow, blogs, tutorials, etc.).
+    If no academic sources remain, returns '[Add your references here.]'.
+    """
+    academic_patterns = [
+        "arxiv.org", "ieee.org", "acm.org", "doi.org", "springer.com",
+        "openreview.net", "aclanthology.org", "sciencedirect.com",
+        "semanticscholar.org", "researchgate.net", "tijer.org",
+        "nature.com", "neurips.cc", "icml.cc", "aaai.org", "ijcai.org", "usenix.org",
+        "fastapi.tiangolo.com", "docs.reportlab.com", "docs.", "developer."
+    ]
+    banned_ref_domains = [
+        "linkedin.com", "langflow", "machinelearningplus", "pinecone", "educative", "medium.com", "towardsdatascience",
+        "circleci", "promptabcd", "geeksforgeeks", "tutorialspoint", "w3schools", "dev.to", "hashnode",
+        "docker", "jenkins", "travis-ci", "datadog", "newrelic", "sentry", "atlassian", "jira",
+        "youtube.com", "youtu.be", "/blog/", "/blogs/", "/courses/", "/course/", "/tutorial/", "/tutorials/"
+    ]
+    academic_sources: list[dict[str, Any]] = []
+    for s in (sources or []):
+        u = str(s.get("url") or "").lower()
+        title = str(s.get("title") or "").lower()
+        if any(bd in u for bd in banned_ref_domains):
+            continue
+        is_academic = any(p in u for p in academic_patterns) or any(
+            k in title for k in ["arxiv", "conference", "proceedings", "journal", "transactions", "symposium", "documentation", "reference manual", "paper"]
+        )
+        if is_academic:
+            academic_sources.append(s)
+
+    academic_sources = deduplicate_and_clean_sources(academic_sources)
+    if not academic_sources:
+        return "## References\n\n[Add your references here.]"
+
+    lines = ["## References\n"]
+    for i, s in enumerate(academic_sources, start=1):
+        s_title = str(s.get("title") or "Reference Source").strip().rstrip(".")
+        s_url = str(s.get("url") or "").strip()
+        if s_url:
+            lines.append(f"[{i}] {s_title}, Available: {s_url}.")
+        else:
+            lines.append(f"[{i}] {s_title}.")
+    if len(academic_sources) < 3:
+        lines.append("[Add more references here]")
+    return "\n\n".join(lines)
 
 
 def parse_count_mention(match_text: str) -> int | None:
@@ -1233,6 +1311,17 @@ def clean_dangling_fragments_and_placeholders(text: str) -> str:
     if not text:
         return text
 
+    # Drop lone empty list items (e.g. a lone "4." or "-")
+    cleaned_lines = []
+    for line in text.split("\n"):
+        if re.match(r"^\s*(?:\d+[\.\)]|[a-zA-Z][\.\)]|[-*])\s*$", line):
+            continue
+        cleaned_lines.append(line)
+    text = "\n".join(cleaned_lines)
+
+    # Strip leading dangling punctuation such as ")."
+    text = re.sub(r"(?m)^\s*[\)\.\,\;\:]+\s*", "", text)
+
     # Remove meta paragraph in 6.1 ("The introductory overview provides…")
     text = re.sub(r"[^\.\n]*\bthe\s+introductory\s+overview\s+provides\b[^\.\n]*\.?", "", text, flags=re.IGNORECASE)
 
@@ -1448,6 +1537,8 @@ def filter_grounded_college_section(
     positive_facts = re.split(r"NOT TRUE\s*/\s*DO NOT WRITE", fact_sheet, flags=re.IGNORECASE)[0]
     allowed_tokens = build_allowed_tokens_set(positive_facts=positive_facts)
 
+    sec_md = normalize_unicode_punctuation(sec_md)
+
     m_ch = re.search(r"^(?:chapter\s+)?(\d+)", sec_title.strip(), re.IGNORECASE)
     actual_ch_num = int(m_ch.group(1)) if m_ch else 0
     apply_whitelist = (actual_ch_num >= 3)
@@ -1461,6 +1552,12 @@ def filter_grounded_college_section(
     if re.search(r"^4\.6\s+data\s+design\b", sec_title, re.IGNORECASE) or norm_sec == "4.6 data design":
         return build_deterministic_data_design_section(sec_title, heading_prefix)
 
+    # Section 5.4: Database Technology (real path backend/app/models.py and drop migrated automatically)
+    if re.search(r"^5\.4\b", sec_title) or (actual_ch_num == 5 and any(k in norm_sec for k in ["5.4", "database technology", "persistence technology"])):
+        sec_md = re.sub(r"\bbackend/models\.py\b", "backend/app/models.py", sec_md)
+        sec_md = re.sub(r"(?<!app/)models\.py\b", "backend/app/models.py", sec_md)
+        sec_md = re.sub(r"\s*(?:,\s*)?(?:and\s+)?(?:is\s+)?(?:migrated\s+automatically|automatically\s+migrated)[^\n\.]*", "", sec_md, flags=re.IGNORECASE)
+
     # 6.6 Team Structure: if team size is 1, single student (Task 2 Item 10)
     if re.search(r"^6\.6\b", sec_title) or (actual_ch_num == 6 and any(k in norm_sec for k in ["team structure", "team organization", "team roles"])):
         return f"{heading_prefix} {sec_title}\n\nThe project was developed by a single student."
@@ -1469,9 +1566,30 @@ def filter_grounded_college_section(
     if re.search(r"^7\.3\b", sec_title) or (actual_ch_num == 7 and "data dictionary" in norm_sec):
         return build_deterministic_data_dictionary_section(sec_title, heading_prefix)
 
+    # Section 9.4: User feedback must be placeholder unless feedback was supplied in facts
+    if any(k in norm_sec for k in ["9.4", "user feedback"]):
+        has_user_feedback = any(k in facts_lower for k in ["user feedback", "survey response", "feedback collected", "user study", "survey result"]) and len(facts_lower.split()) > 20
+        if not has_user_feedback:
+            return f"{heading_prefix} {sec_title}\n\n[Add your user feedback results here.]"
+
     # Deterministic Installation for Section 10.3 (Task 2 Item 7)
     if re.search(r"^10\.3\b", sec_title):
         return build_deterministic_installation_section(sec_title, heading_prefix)
+
+    # Section 10.4: User Guide (pause/resume must not refer to /cancel endpoint)
+    if re.search(r"^10\.4\b", sec_title) or (actual_ch_num == 10 and "user guide" in norm_sec):
+        sec_md = re.sub(
+            r"\bpause/resume\s+(?:with|via)\s+`?/api/runs/\{run_id\}/cancel`?(?:\s+or\s+`?/api/runs/\{run_id\}/resume`?)?",
+            "cancel execution via `/api/runs/{run_id}/cancel`",
+            sec_md,
+            flags=re.IGNORECASE,
+        )
+        sec_md = re.sub(
+            r"\b(?:pause\s+or\s+resume|pause/resume)\b[^\.\n]*`?/api/runs/\{run_id\}/cancel`?[^\.\n]*\.?",
+            "Execution can be cancelled via `/api/runs/{run_id}/cancel`.",
+            sec_md,
+            flags=re.IGNORECASE,
+        )
 
     # Sections 10.5, 10.6, 10.7 matching headings (Task 2 Item 6)
     if re.search(r"^10\.5\b", sec_title):
@@ -1481,9 +1599,10 @@ System maintenance is performed through manual process restarts following code c
 
     if re.search(r"^10\.6\b", sec_title):
         db_file = get_verified_db_filename()
+        db_str = f"the SQLite database file (`{db_file}`)" if db_file != "the SQLite database file" else "the SQLite database file"
         return f"""{heading_prefix} {sec_title}
 
-Database backup and recovery is conducted by creating direct filesystem copies of the SQLite database file (`{db_file}`). In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
+Database backup and recovery is conducted by creating direct filesystem copies of {db_str}. In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
 
     if re.search(r"^10\.7\b", sec_title):
         return f"""{heading_prefix} {sec_title}
@@ -1537,6 +1656,15 @@ Deployment challenges primarily center on managing external API rate limits and 
             out_lines.append("")
             continue
 
+        # Drop empty list items (e.g. a lone "4." or "-")
+        if re.match(r"^(?:\d+[\.\)]|[a-zA-Z][\.\)]|[-*])\s*$", stripped):
+            continue
+
+        # Strip leading dangling punctuation such as ")."
+        stripped = re.sub(r"^[\)\.\,\;\:]+\s*", "", stripped)
+        if not stripped:
+            continue
+
         if stripped.startswith("#") or stripped.startswith("[Insert ") or stripped.startswith("|") or stripped == "[Insert table here]":
             out_lines.append(line)
             continue
@@ -1548,9 +1676,32 @@ Deployment challenges primarily center on managing external API rate limits and 
 
         sentences = re.split(r"(?<=[.!?])\s+", stripped)
         kept_sentences: list[str] = []
+        first_dropped = False
 
-        for sent in sentences:
+        for sent_idx, sent in enumerate(sentences):
+            sent = sent.strip()
+            # Strip leading dangling punctuation on sentence
+            sent = re.sub(r"^[\)\.\,\;\:]+\s*", "", sent)
+            if not sent:
+                if sent_idx == 0:
+                    first_dropped = True
+                continue
+
             s_low = sent.lower()
+
+            # Drop meta sentences containing "placeholder diagram"
+            if "placeholder diagram" in s_low:
+                logger.info("Grounding filter dropped in [%s]: %s (reason: meta placeholder diagram)", sec_title, sent)
+                if sent_idx == 0:
+                    first_dropped = True
+                continue
+
+            # Core functionality claims forbidden
+            if re.search(r"\bcore\s+functionality\b", s_low):
+                logger.info("Grounding filter dropped in [%s]: %s (reason: core functionality claim)", sec_title, sent)
+                if sent_idx == 0:
+                    first_dropped = True
+                continue
 
             # Unsupported claims (Item 1 & Item 3)
             unsupported_claim = False
@@ -1575,6 +1726,7 @@ Deployment challenges primarily center on managing external API rate limits and 
                 r"\blog\s+rotation\b",
                 r"\bmonitoring\b",
                 r"\btest-driven\b",
+                r"\btest\s+driven\b",
                 r"\bmirroring\s+the\s+production\s+stack\b",
                 r"\beasy\s+migration\b",
                 r"\bfully\s+documented\b",
@@ -1582,6 +1734,21 @@ Deployment challenges primarily center on managing external API rate limits and 
                 r"\bcollected\s+comments\b",
                 r"\binform\s+ui\s+refinements\b",
                 r"\bacid\b",
+                r"\batomic\b",
+                r"\blogged\s+for\s+audit\b",
+                r"\brole-based\b",
+                r"\brole\s+based\b",
+                r"\bmigrated\s+automatically\b",
+                r"\bautomatically\s+migrated\b",
+                r"\bwithin\s+(?:two|2)\s+seconds?\b",
+                r"\bencrypted\s+smtp\b",
+                r"\bindependent\s+scaling\b",
+                r"\bindependently\s+scaled?\b",
+                r"\brobust(?!\s+capabilities)\b",
+                r"\bcomprehensive\s+unit\s+tests?\b",
+                r"\bcomprehensive\s+tests?\b",
+                r"\bqualitative\s+comments?\b",
+                r"\bsatisfaction\s+scores?\b",
                 r"\bservice\s+classes\b",
                 r"\bcommon\s+services\s+package\b",
                 r"\bthe\s+introductory\s+overview\s+provides\b",
@@ -1591,6 +1758,8 @@ Deployment challenges primarily center on managing external API rate limits and 
                     unsupported_claim = True
                     break
             if unsupported_claim:
+                if sent_idx == 0:
+                    first_dropped = True
                 continue
 
             # Test coverage: never say tests cover agents, endpoints, state transitions, OTP flow, token accounting, orchestration, fallback, or persistence
@@ -1603,49 +1772,65 @@ Deployment challenges primarily center on managing external API rate limits and 
                     "concurrency", "rate limit"
                 ]):
                     logger.info("Grounding filter dropped in [%s]: %s (reason: ungrounded test coverage)", sec_title, sent)
+                    if sent_idx == 0:
+                        first_dropped = True
                     continue
 
             # Section 3.7 must be a plan (or placeholder), not non-functional requirements (Item 4)
             if re.search(r"^3\.7\b", sec_title) or (actual_ch_num == 3 and "plan" in norm_sec):
                 if any(k in s_low for k in ["non-functional", "nonfunctional", "non functional"]):
                     logger.info("Grounding filter dropped in [%s]: %s (reason: non-functional claim in implementation plan)", sec_title, sent)
+                    if sent_idx == 0:
+                        first_dropped = True
                     continue
 
             # Dangling starters / enders (Item 5)
             is_summary_sec = "summary" in norm_sec
             if re.search(r"^(?:The chapter also\b|This section also\b|The section also\b|It also\b)", sent.strip(), re.IGNORECASE) or (is_summary_sec and re.match(r"^It\s+", sent.strip(), re.IGNORECASE)):
                 logger.info("Grounding filter dropped in [%s]: %s (reason: dangling starter)", sec_title, sent)
+                if sent_idx == 0:
+                    first_dropped = True
                 continue
             if re.search(r"\b\d+\.\d+\.?\s*$", sent.strip()):
                 logger.info("Grounding filter dropped in [%s]: %s (reason: dangling bare number token)", sec_title, sent)
+                if sent_idx == 0:
+                    first_dropped = True
                 continue
 
-            # Remove specific test numbers from all sections except 8.5 (Item 3)
+            # Remove specific test numbers from all sections except 8.5 (Item 2)
+            # Match number words ("fourteen", "fourty-two"...) as well as digits
+            test_phrase_pattern = rf"\b{NUMBER_WORDS_RE}\s+(?:(?:automated\s+)?pytest\s+)?(?:unit\s+)?tests?\b"
             if not any(k in norm_sec for k in ["8.5"]):
-                if re.search(r"\b\d+\s+(?:unit\s+|automated\s+)?tests?\b", sent, re.IGNORECASE):
-                    sent = re.sub(r"\b\d+\s+(?:unit\s+|automated\s+)?tests?\b", "automated pytest unit tests", sent, flags=re.IGNORECASE)
+                if re.search(test_phrase_pattern, sent, re.IGNORECASE):
+                    sent = re.sub(test_phrase_pattern, "automated pytest unit tests", sent, flags=re.IGNORECASE)
                     s_low = sent.lower()
             else:
                 cnt = get_verified_test_count()
-                if re.search(r"\b(?:\d+|fourteen)\s+(?:unit\s+|automated\s+)?tests?\b", sent, re.IGNORECASE):
-                    sent = re.sub(r"\b(?:\d+|fourteen)\s+(?:unit\s+|automated\s+)?tests?\b", f"{cnt} automated pytest unit tests", sent, flags=re.IGNORECASE)
+                if re.search(test_phrase_pattern, sent, re.IGNORECASE):
+                    sent = re.sub(test_phrase_pattern, f"{cnt} automated pytest unit tests", sent, flags=re.IGNORECASE)
                     s_low = sent.lower()
 
             # Whitelist grounding filter for chapters 3-11 (Item 1)
             if apply_whitelist:
                 if not is_sentence_allowed_by_whitelist(sent, allowed_tokens, positive_facts):
                     logger.info("Grounding filter dropped in [%s]: %s (reason: whitelist check failed)", sec_title, sent)
+                    if sent_idx == 0:
+                        first_dropped = True
                     continue
 
             # Check forbidden words
             if any(fw in s_low for fw in FORBIDDEN_COLLEGE_WORDS):
                 logger.info("Grounding filter dropped in [%s]: %s (reason: forbidden college word)", sec_title, sent)
+                if sent_idx == 0:
+                    first_dropped = True
                 continue
 
             # Check forbidden tools (unless explicitly in facts)
             found_tool = next((tool for tool in FORBIDDEN_COLLEGE_TOOLS if tool in s_low and tool not in facts_lower), None)
             if found_tool:
                 logger.info("Grounding filter dropped in [%s]: %s (reason: forbidden college tool: %s)", sec_title, sent, found_tool)
+                if sent_idx == 0:
+                    first_dropped = True
                 continue
 
             # Banned databases
@@ -1851,6 +2036,13 @@ Deployment challenges primarily center on managing external API rate limits and 
                     continue
 
             kept_sentences.append(sent)
+
+        if kept_sentences:
+            # If the first sentence was dropped and next begins with "Also"/"Moreover"/"Further"/"Additional", drop paragraph
+            if first_dropped:
+                first_kept = kept_sentences[0].strip().lower()
+                if re.match(r"^(?:additional\b|also\b|further\b|moreover\b|in\s+addition\b)", first_kept):
+                    kept_sentences = []
 
         if kept_sentences:
             rebuilt_line = " ".join(kept_sentences).strip()
@@ -3060,6 +3252,16 @@ Return ONLY bullet points starting with '- '."""
                 record_section_progress(sec_title)
                 continue
 
+            # Section 9.4: User feedback must be placeholder unless feedback was supplied in facts
+            if actual_ch_num == 9 and ("9.4" in sec_title or "user feedback" in norm_sec or "survey" in norm_sec):
+                has_user_fb = any(k in ch_facts.lower() for k in ["user feedback", "survey response", "feedback collected", "user study", "survey result"]) and len(ch_facts.split()) > 20
+                if not has_user_fb:
+                    sec_md = f"{heading_prefix} {sec_title}\n\n[Add your user feedback results here.]"
+                    rendered_subsections.append((s_idx, sec_md.strip()))
+                    persist_section_to_db(s_idx, sec_md.strip())
+                    record_section_progress(sec_title)
+                    continue
+
             # Deterministic Installation for Section 10.3 (Task 2 Item 7)
             if re.search(r"^10\.3\b", sec_title):
                 sec_md = build_deterministic_installation_section(sec_title, heading_prefix)
@@ -3079,9 +3281,11 @@ System maintenance is performed through manual process restarts following code c
                 continue
 
             if re.search(r"^10\.6\b", sec_title):
+                db_file = get_verified_db_filename()
+                db_str = f"the SQLite database file (`{db_file}`)" if db_file != "the SQLite database file" else "the SQLite database file"
                 sec_md = f"""{heading_prefix} {sec_title}
 
-Database backup and recovery is conducted by creating direct filesystem copies of the SQLite database file (`reports.db`). In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring ACID transaction integrity."""
+Database backup and recovery is conducted by creating direct filesystem copies of {db_str}. In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -3355,13 +3559,22 @@ Continue:"""
                 except AuthenticationError as auth_err:
                     raise auth_err
                 except (TimeoutError, concurrent.futures.TimeoutError) as te:
-                    last_reason = "watchdog_timeout_3min"
-                    logger.warning(
-                        "Watchdog: Section '%s' (s_idx=%d) timed out after 3 minutes. Failing to placeholder (%s).",
-                        sec_title, s_idx, te
-                    )
-                    sec_md = ""
-                    break
+                    if attempt == 1:
+                        last_reason = "watchdog_timeout_attempt_1"
+                        logger.warning(
+                            "Watchdog: Section '%s' (s_idx=%d) timed out on attempt 1 (%s). Retrying once before placeholder...",
+                            sec_title, s_idx, te
+                        )
+                        sec_md = ""
+                        continue
+                    else:
+                        last_reason = "watchdog_timeout_3min"
+                        logger.warning(
+                            "Watchdog: Section '%s' (s_idx=%d) timed out after retry. Failing to placeholder (%s).",
+                            sec_title, s_idx, te
+                        )
+                        sec_md = ""
+                        break
                 except DailyTokenLimitError as dt_err:
                     raise dt_err
                 except Exception as exc:
@@ -3595,26 +3808,28 @@ Continue:"""
         if cited_sources:
             final_sources = cited_sources
 
-    # Format IEEE bibliography using only real sources returned by search
-    ieee_refs = ["## References\n"]
-    for i, s in enumerate(final_sources, start=1):
-        s_title = s.get("title", "Reference Source").strip().rstrip(".")
-        s_url = s.get("url", "").strip()
-        if s_url:
-            ieee_refs.append(f"[{i}] {s_title}, Available: {s_url}.")
-        else:
-            ieee_refs.append(f"[{i}] {s_title}.")
-    if len(final_sources) < 3:
-        ieee_refs.append("[Add more references here]")
-    refs_block = "\n\n".join(ieee_refs)
-    if "## References" in renumbered_markdown:
+    # Format IEEE bibliography using only real academic sources
+    refs_block = format_references_section(final_sources)
+    has_refs_in_outline = any("references" in str(s.get("title", "")).lower() for s in (outline or []))
+    has_appendix = bool(re.search(r"\n#{1,3}\s*Appendix\s+[AB]", renumbered_markdown, flags=re.IGNORECASE))
+    if re.search(r"^#{1,3}\s*References\b", renumbered_markdown, flags=re.MULTILINE | re.IGNORECASE):
         renumbered_markdown = re.sub(
-            r"## References.*?(?=\n## |\Z)",
+            r"^#{1,3}\s*References.*?(?=\n#{1,3}\s+(?:Appendix|[A-Z])|\Z)",
             refs_block,
             renumbered_markdown,
-            flags=re.DOTALL,
+            flags=re.MULTILINE | re.DOTALL | re.IGNORECASE,
         )
-    else:
+    elif has_appendix:
+        app_match = re.search(r"(?=\n#{1,3}\s*Appendix\s+[AB])", renumbered_markdown, flags=re.IGNORECASE)
+        if app_match:
+            renumbered_markdown = (
+                renumbered_markdown[:app_match.start()]
+                + f"\n\n{refs_block}"
+                + renumbered_markdown[app_match.start():]
+            )
+        else:
+            renumbered_markdown += f"\n\n{refs_block}"
+    elif has_refs_in_outline:
         renumbered_markdown += f"\n\n{refs_block}"
 
     doc_title = (
@@ -3791,7 +4006,7 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
                 sec["completed"] = True
                 continue
             if "references" in norm_t:
-                sec["content"] = "## References\n\n*(References will be listed in IEEE format)*"
+                sec["content"] = format_references_section(sources)
                 sec["completed"] = True
                 continue
 
@@ -3816,25 +4031,27 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
         renumbered_markdown, final_sources = filter_and_renumber_sources(raw_markdown, sources)
         final_sources = deduplicate_and_clean_sources(final_sources)
 
-        ieee_refs = ["## References\n"]
-        for i, s in enumerate(final_sources, start=1):
-            s_title = s.get("title", "Reference Source").strip().rstrip(".")
-            s_url = s.get("url", "").strip()
-            if s_url:
-                ieee_refs.append(f"[{i}] {s_title}, Available: {s_url}.")
-            else:
-                ieee_refs.append(f"[{i}] {s_title}.")
-        if len(final_sources) < 3:
-            ieee_refs.append("[Add more references here]")
-        refs_block = "\n\n".join(ieee_refs)
-        if "## References" in renumbered_markdown:
+        refs_block = format_references_section(final_sources)
+        has_refs_in_outline = any("references" in str(s.get("title", "")).lower() for s in (outline or []))
+        has_appendix = bool(re.search(r"\n#{1,3}\s*Appendix\s+[AB]", renumbered_markdown, flags=re.IGNORECASE))
+        if re.search(r"^#{1,3}\s*References\b", renumbered_markdown, flags=re.MULTILINE | re.IGNORECASE):
             renumbered_markdown = re.sub(
-                r"## References.*?(?=\n## |\Z)",
+                r"^#{1,3}\s*References.*?(?=\n#{1,3}\s+(?:Appendix|[A-Z])|\Z)",
                 refs_block,
                 renumbered_markdown,
-                flags=re.DOTALL,
+                flags=re.MULTILINE | re.DOTALL | re.IGNORECASE,
             )
-        else:
+        elif has_appendix:
+            app_match = re.search(r"(?=\n#{1,3}\s*Appendix\s+[AB])", renumbered_markdown, flags=re.IGNORECASE)
+            if app_match:
+                renumbered_markdown = (
+                    renumbered_markdown[:app_match.start()]
+                    + f"\n\n{refs_block}"
+                    + renumbered_markdown[app_match.start():]
+                )
+            else:
+                renumbered_markdown += f"\n\n{refs_block}"
+        elif has_refs_in_outline:
             renumbered_markdown += f"\n\n{refs_block}"
 
         doc_title = ((fm.get("projectTitle") if fm else None) or r.title or topic).strip().rstrip(".")

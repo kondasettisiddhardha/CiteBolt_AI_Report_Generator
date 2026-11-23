@@ -5,14 +5,29 @@ import type { RunItem } from "@/hooks/useRuns";
 import { exportUrl } from "@/lib/api";
 import StatusBadge from "./StatusBadge";
 
-function formatSafeDistance(dateVal?: string | null): string {
-  if (!dateVal) return "recently";
+export function parseUtcDate(dateVal?: string | null): Date | null {
+  if (!dateVal) return null;
+  let s = String(dateVal).trim();
+  if (!s) return null;
+  if (!s.endsWith("Z") && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+    s += "Z";
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+export function formatSafeDistance(dateVal?: string | null): string {
+  if (!dateVal) return "just now";
   try {
-    const d = new Date(dateVal);
-    if (isNaN(d.getTime())) return "recently";
+    const d = parseUtcDate(dateVal);
+    if (!d) return "just now";
+    const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diffSec < 60 && diffSec >= -30) {
+      return "just now";
+    }
     return formatDistanceToNow(d, { addSuffix: true });
   } catch {
-    return "recently";
+    return "just now";
   }
 }
 

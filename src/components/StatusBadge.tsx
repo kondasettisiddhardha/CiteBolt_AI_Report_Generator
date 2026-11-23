@@ -7,6 +7,8 @@ const statusColors: Record<RunStatus, string> = {
   completed: "bg-emerald-600",
   completed_with_warnings: "bg-amber-500",
   failed: "bg-red-600",
+  interrupted: "bg-zinc-500",
+  cancelled: "bg-zinc-500",
 };
 
 const labelColors: Record<RunStatus, string> = {
@@ -15,6 +17,8 @@ const labelColors: Record<RunStatus, string> = {
   completed: "bg-emerald-50 text-emerald-700",
   completed_with_warnings: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-300 dark:border-amber-800",
   failed: "bg-red-50 text-red-700",
+  interrupted: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  cancelled: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
 };
 
 export default function StatusBadge({ status }: { status: RunStatus }) {

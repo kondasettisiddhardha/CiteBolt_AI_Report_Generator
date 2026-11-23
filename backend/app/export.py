@@ -1747,6 +1747,17 @@ def _body_blocks(markdown: str) -> list[dict[str, Any]]:
             flush()
             continue
 
+        # Drop empty list items (e.g. a lone "4." or "-")
+        if re.match(r"^(?:\d+[.)]|[-*])\s*$", stripped):
+            flush()
+            continue
+
+        # Strip leading dangling punctuation such as ")."
+        stripped = re.sub(r"^[\)\.\,\;\:]+\s*", "", stripped)
+        if not stripped:
+            flush()
+            continue
+
         if stripped.startswith("### "):
             flush()
             blocks.append({"kind": "h3", "text": stripped[4:]})
@@ -1758,15 +1769,19 @@ def _body_blocks(markdown: str) -> list[dict[str, Any]]:
             blocks.append({"kind": "h1", "text": stripped[2:]})
         elif re.match(r"^[-*]\s+", stripped):
             flush()
-            blocks.append({"kind": "bullet", "text": re.sub(r"^[-*]\s+", "", stripped)})
+            b_text = re.sub(r"^[-*]\s+", "", stripped).strip()
+            if b_text:
+                blocks.append({"kind": "bullet", "text": b_text})
         elif re.match(r"^\d+[.)]\s+", stripped):
             flush()
             m = re.match(r"^(\d+)[.)]\s+(.*)", stripped)
-            blocks.append({
-                "kind": "number",
-                "text": m.group(2) if m else stripped,
-                "num": m.group(1) if m else "1",
-            })
+            item_text = (m.group(2) if m else "").strip()
+            if item_text:
+                blocks.append({
+                    "kind": "number",
+                    "text": item_text,
+                    "num": m.group(1) if m else "1",
+                })
         elif stripped.startswith("|"):
             cells = [cell.strip() for cell in stripped.strip("|").split("|")]
             if all(set(cell) <= set("-: ") for cell in cells):

@@ -104,6 +104,14 @@ export default function RunProgress() {
     setRun(data);
     if (typeof data.elapsed_seconds === "number" && data.elapsed_seconds > 0) {
       setSeconds(data.elapsed_seconds);
+    } else if (data.created_at) {
+      let s = String(data.created_at).trim();
+      if (!s.endsWith("Z") && !/[+-]\d{2}:?\d{2}$/.test(s)) s += "Z";
+      const start = new Date(s);
+      if (!isNaN(start.getTime())) {
+        const diff = Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000));
+        setSeconds(diff);
+      }
     }
     if (data.total_sections && data.total_sections > 0) {
       setSectionProgress((prev) => {

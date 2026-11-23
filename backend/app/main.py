@@ -193,6 +193,16 @@ def logout(response: Response) -> dict[str, bool]:
     return {"ok": True}
 
 
+def _format_utc_iso(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 @app.get("/api/auth/me")
 def me(user: User | None = Depends(get_optional_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     if user is None:
@@ -205,7 +215,7 @@ def me(user: User | None = Depends(get_optional_user), db: Session = Depends(get
         "user": {
             "id": user.id,
             "email": user.email,
-            "created_at": user.created_at.isoformat(),
+            "created_at": _format_utc_iso(user.created_at),
             "runs_today": today,
             "daily_limit": DAILY_RUN_LIMIT,
             "runs_left": max(0, DAILY_RUN_LIMIT - today),
@@ -227,17 +237,24 @@ def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
                 current_section_title = s.get("title") or s.get("heading")
                 break
 
+    from app.runtime import get_active
+    active = get_active(run.id)
+    status = run.status
+    if status == "running" and not active:
+        status = "interrupted"
+
     elapsed = run.elapsed_seconds or 0
     if run.status == "running" and run.created_at:
-        now = datetime.utcnow()
-        elapsed = max(elapsed, int((now - run.created_at).total_seconds()))
+        now = datetime.now(timezone.utc)
+        created = run.created_at.replace(tzinfo=timezone.utc) if run.created_at.tzinfo is None else run.created_at
+        elapsed = max(elapsed, int((now - created).total_seconds()))
 
     data: dict[str, Any] = {
         "id": run.id,
         "topic": run.topic,
         "title": run.title or run.topic,
         "report_type": run.report_type,
-        "status": run.status,
+        "status": status,
         "sources_count": run.sources_count,
         "word_count": run.word_count or (len(run.report_markdown.split()) if run.report_markdown else 0),
         "token_count": run.token_count or 0,
@@ -250,8 +267,8 @@ def _run_payload(run: Run, full: bool = False) -> dict[str, Any]:
         "target_words": getattr(run, "target_words", 4000) or 4000,
         "outline": outline_data,
         "front_matter": json.loads(run.front_matter_json) if getattr(run, "front_matter_json", None) else None,
-        "created_at": run.created_at.isoformat() if run.created_at else None,
-        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "created_at": _format_utc_iso(run.created_at),
+        "completed_at": _format_utc_iso(run.completed_at),
         "error_message": run.error_message,
     }
     if full:

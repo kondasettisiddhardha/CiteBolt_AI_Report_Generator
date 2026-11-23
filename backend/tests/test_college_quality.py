@@ -2451,6 +2451,169 @@ Numbered deployment steps:
         self.assertIn("References", dummy_run.report_markdown)
         self.assertGreater(dummy_run.word_count, 0)
 
+    def test_regression_unicode_normalization_and_number_words(self):
+        """Test Unicode U+2011 hyphens and number words are normalized and filtered."""
+        from app.agents.section_engine import filter_grounded_college_section, get_verified_test_count
+
+        # U+2011 in banned phrases: "three‑month" (\u2011)
+        text_with_u2011 = "The project completed over a three\u2011month timeline. The team established work\u2011streams."
+        filtered = filter_grounded_college_section("3.1 Introduction", text_with_u2011, fact_sheet="Project: CiteBolt")
+        self.assertNotIn("three-month", filtered)
+        self.assertNotIn("work-streams", filtered)
+
+        # Number words test count in 8.1
+        text_81 = "The system was verified using fourteen automated pytest unit tests against mocked APIs."
+        filt_81 = filter_grounded_college_section("8.1 Testing Strategy", text_81, fact_sheet="Project: CiteBolt")
+        self.assertIn("automated pytest unit tests", filt_81)
+        self.assertNotIn("fourteen", filt_81)
+
+        # Number words in 8.5
+        cnt = get_verified_test_count()
+        text_85 = "The suite executes fourteen unit tests covering formatting checks."
+        filt_85 = filter_grounded_college_section("8.5 Test Cases", text_85, fact_sheet="Project: CiteBolt")
+        self.assertIn(f"{cnt} automated pytest unit tests", filt_85)
+        self.assertNotIn("fourteen", filt_85)
+
+    def test_regression_banned_claims_and_templates(self):
+        """Test banned claims like test-driven, ACID, atomic, role-based are dropped."""
+        from app.agents.section_engine import filter_grounded_college_section, get_verified_db_filename
+
+        banned_phrases = [
+            "Development followed a test-driven approach.",
+            "Database operations ensure ACID guarantees.",
+            "The database maintains atomic transactions.",
+            "All actions are logged for audit purposes.",
+            "The system uses role-based access control.",
+            "Database tables are migrated automatically.",
+            "API responses return within two seconds.",
+            "Alerts are sent using encrypted SMTP.",
+            "Microservices enable independent scaling.",
+            "The architecture is robust against failures.",
+            "The author wrote comprehensive unit tests.",
+            "Users provided qualitative comments on usability.",
+            "Initial satisfaction scores exceeded expectations.",
+            "The tests confirm coverage of core functionality.",
+        ]
+        for phrase in banned_phrases:
+            res = filter_grounded_college_section("7.1 Implementation Overview", phrase, fact_sheet="Project: CiteBolt")
+            self.assertNotIn(phrase, res)
+
+        # 10.6 template check: no ACID, uses verified DB filename
+        res_106 = filter_grounded_college_section("10.6 Backup and Recovery", "", fact_sheet="Project: CiteBolt")
+        self.assertNotIn("ACID", res_106)
+        db_file = get_verified_db_filename()
+        if db_file != "the SQLite database file":
+            self.assertIn(db_file, res_106)
+
+        # 5.4 template / section check: uses backend/app/models.py and no migrated automatically
+        sec_54_raw = "The schema is defined in backend/models.py and migrated automatically on launch."
+        res_54 = filter_grounded_college_section("5.4 Database Technology", sec_54_raw, fact_sheet="Project: CiteBolt")
+        self.assertIn("backend/app/models.py", res_54)
+        self.assertNotIn("backend/models.py", res_54)
+        self.assertNotIn("migrated automatically", res_54)
+
+        # 10.4 user guide check: pause/resume does not reference /cancel
+        sec_104_raw = "You can pause/resume with /api/runs/{run_id}/cancel or /api/runs/{run_id}/resume."
+        res_104 = filter_grounded_college_section("10.4 User Guide", sec_104_raw, fact_sheet="Project: CiteBolt")
+        self.assertNotIn("pause/resume with /api/runs/{run_id}/cancel", res_104)
+
+        # 9.4 user feedback check: placeholder unless feedback supplied
+        res_94_nofeedback = filter_grounded_college_section("9.4 User Feedback", "Usability was good.", fact_sheet="Project: CiteBolt")
+        self.assertIn("[Add your user feedback results here.]", res_94_nofeedback)
+
+    def test_regression_layout_cleaning_rules(self):
+        """Test dropping lone empty list items, leading dangling punctuation, and transitional paragraphs."""
+        from app.agents.section_engine import filter_grounded_college_section, clean_dangling_fragments_and_placeholders
+
+        # Lone empty list item "4."
+        text_with_empty_item = "### 3.1 Overview\n\n1. Valid requirement.\n4.\n\nParagraph text."
+        res = clean_dangling_fragments_and_placeholders(text_with_empty_item)
+        lines = [ln.strip() for ln in res.splitlines()]
+        self.assertNotIn("4.", lines)
+
+        # Leading dangling punctuation
+        text_punct = "). The pipeline runs locally."
+        res_p = clean_dangling_fragments_and_placeholders(text_punct)
+        self.assertFalse(res_p.startswith(")."))
+
+        # Meta sentences with "placeholder diagram"
+        text_meta = "The system flow is shown in the placeholder diagram. The architecture consists of three agents."
+        res_meta = filter_grounded_college_section("4.1 Overview", text_meta, fact_sheet="Project: CiteBolt")
+        self.assertNotIn("placeholder diagram", res_meta)
+
+        # If first sentence is dropped and next begins with "Also"/"Moreover"/"Further" -> drop paragraph
+        text_para = "Development was test-driven from day one. Moreover, secondary services ran on dedicated ports."
+        res_para = filter_grounded_college_section("7.1 Architecture", text_para, fact_sheet="Project: CiteBolt")
+        self.assertNotIn("Moreover", res_para)
+
+    def test_regression_references_order_and_academic_filtering(self):
+        """Test References is placed BEFORE Appendices and only academic sources are included."""
+        from app.agents.section_engine import format_references_section, finalise_run_from_sections
+        from app.models import Run
+
+        sources = [
+            {"title": "LinkedIn Article on LangGraph", "url": "https://linkedin.com/pulse/sample"},
+            {"title": "Langflow Workflow Tutorial", "url": "https://langflow.org/blog/tut"},
+            {"title": "Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762"},
+        ]
+        refs_text = format_references_section(sources)
+        self.assertIn("Attention Is All You Need", refs_text)
+        self.assertNotIn("LinkedIn", refs_text)
+        self.assertNotIn("Langflow", refs_text)
+
+        # When no academic sources, emits placeholder
+        non_acad_sources = [{"title": "Dev.to blog post", "url": "https://dev.to/user/post"}]
+        empty_refs = format_references_section(non_acad_sources)
+        self.assertEqual(empty_refs, "## References\n\n[Add your references here.]")
+
+        # Test References is placed BEFORE Appendix A in finalise_run_from_sections
+        outline = [
+            {"title": "1.1 Overview", "completed": True, "content": "### 1.1 Overview\n\nText."},
+            {"title": "References", "completed": False, "content": ""},
+            {"title": "Appendix A: Certificates of Publication", "completed": False, "content": ""},
+            {"title": "Appendix B: Glossary", "completed": False, "content": ""},
+        ]
+        dummy_run = Run(
+            id="dummy_ref_order_test",
+            topic="CiteBolt",
+            status="running",
+            outline_json=json.dumps(outline),
+            report_markdown="### 1.1 Overview\n\nText.",
+            sources_json=json.dumps(sources),
+        )
+        mock_sess = MagicMock()
+        mock_sess.get.return_value = dummy_run
+        finalise_run_from_sections("dummy_ref_order_test", session=mock_sess)
+
+        md = dummy_run.report_markdown
+        ref_pos = md.find("## References")
+        app_a_pos = md.find("## Appendix A")
+        self.assertNotEqual(ref_pos, -1)
+        self.assertNotEqual(app_a_pos, -1)
+        self.assertLess(ref_pos, app_a_pos, "References must appear before Appendix A")
+
+    def test_regression_utc_iso_timestamps_and_interrupted_run(self):
+        """Test API serializes UTC timestamps with 'Z' and marks stalled runs as 'interrupted'."""
+        from datetime import datetime, timezone
+        from app.main import _format_utc_iso, _run_payload
+        from app.models import Run
+
+        now_utc = datetime.now(timezone.utc)
+        iso_str = _format_utc_iso(now_utc)
+        self.assertTrue(iso_str.endswith("Z"))
+
+        # Stuck running run with no active worker should be 'interrupted'
+        stuck_run = Run(
+            id="stuck_run_123",
+            topic="CiteBolt Multi-Agent",
+            status="running",
+            created_at=now_utc,
+            elapsed_seconds=10,
+        )
+        payload = _run_payload(stuck_run)
+        self.assertEqual(payload["status"], "interrupted")
+        self.assertTrue(payload["created_at"].endswith("Z"))
+
 
 if __name__ == "__main__":
     unittest.main()
