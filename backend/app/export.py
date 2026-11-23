@@ -455,7 +455,7 @@ def _render_pdf_reportlab(
                 page = getattr(getattr(self, "canv", None), "_pageNumber", 1)
                 low = raw_text.lower()
                 def _is_toc_excluded(text_low: str) -> bool:
-                    if "appendix" in text_low:
+                    if "appendix" in text_low or "references" in text_low:
                         return False
                     return any(k in text_low for k in ["title page", "signatures", "table of contents"])
 
@@ -467,14 +467,21 @@ def _render_pdf_reportlab(
                         self.notify("TOCEntry", (0, raw_text, page, None))
                 elif style == "Heading2":
                     if not _is_toc_excluded(low):
-                        # List of Figures, List of Tables, Certificate, Acknowledgements, Abstract and Appendices are top-level TOC entries
-                        if any(k in low for k in ["list of figures", "list of tables", "appendix", "certificate", "acknowledgement", "acknowledgment", "abstract"]):
+                        # List of Figures, List of Tables, Certificate, Acknowledgements, Abstract, References, and Appendices are top-level TOC entries
+                        if any(k in low for k in ["list of figures", "list of tables", "appendix", "certificate", "acknowledgement", "acknowledgment", "abstract", "references"]):
                             self.notify("TOCEntry", (0, raw_text, page, None))
+                        elif re.match(r"^\d+\.\d+\.\d+\b", raw_text):
+                            self.notify("TOCEntry", (2, raw_text, page, None))
                         else:
                             self.notify("TOCEntry", (1, raw_text, page, None))
                 elif style == "Heading3":
                     if not _is_toc_excluded(low):
-                        self.notify("TOCEntry", (2, raw_text, page, None))
+                        if re.match(r"^\d+\.\d+\.\d+\b", raw_text):
+                            self.notify("TOCEntry", (2, raw_text, page, None))
+                        elif re.match(r"^\d+\.\d+\b", raw_text):
+                            self.notify("TOCEntry", (1, raw_text, page, None))
+                        else:
+                            self.notify("TOCEntry", (2, raw_text, page, None))
                 else:
                     ch1 = NumberedCanvas._chapter1_page
                     if ch1 is not None and page < ch1:
@@ -1004,15 +1011,24 @@ def _render_pdf_reportlab(
                             setattr(story[-1], "keepWithNext", True)
                         diag_p.keepWithNext = True
                         story.append(diag_p)
-                elif re.match(r"^Table\s+\d+\.\d+", text, re.IGNORECASE):
+                elif re.match(r"^Table\s+\d+\.\d+[:\s\-–—]+", text, re.IGNORECASE) and not any(text.lower().startswith(p) for p in ["table 7.1 describes", "table 7.1 lists", "table 7.1 shows", "table 7.1 provides", "table 7.1 illustrates", "table 7.1 summarizes"]) and len(text.split()) <= 12:
                     tbl_cap_p = safe_paragraph(_md_inline_to_reportlab(text, is_template=is_template), caption_style)
+                    # Check if [Insert table here] immediately follows
                     if idx + 1 < len(blocks) and blocks[idx + 1].get("text", "").strip() == "[Insert table here]":
-                        holder_text = blocks[idx + 1].get("text", "").strip()
-                        holder_p = safe_paragraph(_md_inline_to_reportlab(holder_text, is_template=is_template), diagram_box_style)
-                        if story:
-                            setattr(story[-1], "keepWithNext", True)
-                        story.append(KeepTogether([tbl_cap_p, holder_p]))
-                        skip_indices.add(idx + 1)
+                        # If an actual table follows after [Insert table here], drop the placeholder!
+                        if idx + 2 < len(blocks) and blocks[idx + 2].get("kind") == "table":
+                            skip_indices.add(idx + 1)
+                            if story:
+                                setattr(story[-1], "keepWithNext", True)
+                            tbl_cap_p.keepWithNext = True
+                            story.append(tbl_cap_p)
+                        else:
+                            holder_text = blocks[idx + 1].get("text", "").strip()
+                            holder_p = safe_paragraph(_md_inline_to_reportlab(holder_text, is_template=is_template), diagram_box_style)
+                            if story:
+                                setattr(story[-1], "keepWithNext", True)
+                            story.append(KeepTogether([tbl_cap_p, holder_p]))
+                            skip_indices.add(idx + 1)
                     else:
                         if story:
                             setattr(story[-1], "keepWithNext", True)
@@ -1703,6 +1719,13 @@ def _body_blocks(markdown: str) -> list[dict[str, Any]]:
     for raw_line in (markdown or "").splitlines():
         line = raw_line.rstrip()
         stripped = line.strip()
+
+        # Code block reset on markdown headings: a code block can NEVER swallow a heading
+        if in_code and re.match(r"^#{1,4}\s+", stripped):
+            in_code = False
+            if code_lines:
+                blocks.append({"kind": "code", "text": "\n".join(code_lines)})
+                code_lines = []
 
         if stripped.startswith("```"):
             if not in_code:

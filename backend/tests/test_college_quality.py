@@ -2148,6 +2148,138 @@ Numbered deployment steps:
         self.assertIn("| **FastAPI** |", glossary_md)
         self.assertIn("| **LangGraph** |", glossary_md)
 
+    def test_regression_step0_unclosed_code_fence_and_heading_swallow(self):
+        """Step 0: Ensure fenced code block does not swallow subsequent # headings."""
+        from app.export import _body_blocks
+        md_text = (
+            "### 10.3 Installation Process\n\n"
+            "```bash\n"
+            "cd backend\n"
+            "python -m venv .venv\n"
+            "uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload\n"
+            "### 10.4 Configuration Details\n\n"
+            "The configuration uses environment variables.\n"
+        )
+        blocks = _body_blocks(md_text)
+        self.assertEqual(blocks[0]["kind"], "h3")
+        self.assertEqual(blocks[0]["text"], "10.3 Installation Process")
+        self.assertEqual(blocks[1]["kind"], "code")
+        self.assertIn("cd backend", blocks[1]["text"])
+        self.assertEqual(blocks[2]["kind"], "h3")
+        self.assertEqual(blocks[2]["text"], "10.4 Configuration Details")
+
+    def test_regression_step0_installation_lines_restored(self):
+        """Step 0: 10.3 includes backend install & run commands and frontend run commands."""
+        inst = section_engine.build_deterministic_installation_section("CiteBolt", {})
+        self.assertIn("cd backend", inst)
+        self.assertIn("python -m venv .venv", inst)
+        self.assertIn("pip install -r requirements.txt", inst)
+        self.assertIn("uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload", inst)
+        self.assertIn("cd frontend", inst)
+        self.assertIn("npm run dev", inst)
+
+    def test_regression_item1_table_7_1_caption_and_no_duplicate(self):
+        """Item 1: Exactly one Table 7.1 caption, no stray [Insert table here], 7.1 used consistently."""
+        dd = section_engine.build_deterministic_data_dictionary_section("CiteBolt", {})
+        self.assertIn("Table 7.1: Database tables", dd)
+        self.assertEqual(dd.count("Table 7.1: Database tables"), 1)
+        self.assertNotIn("[Insert table here]", dd)
+        for tname in VERIFIED_TABLE_NAMES:
+            self.assertIn(tname, dd)
+
+    def test_regression_item2_grounding_filter_preserves_facts(self):
+        """Item 2: Facts in fact sheet produce text, not placeholders, for 1.2, 3.2, 3.7, 4.7, 5.5, 7.4, 8.1, 8.4, 8.6, 10.1."""
+        facts = (
+            "Project Name: CiteBolt\n"
+            "Core Domain: AI Research Assistant\n"
+            "Target Users: Academic researchers and students\n"
+            "External Integrations: Tavily, Groq, Gmail SMTP\n"
+            "Core Modules: auth, pipeline, export\n"
+            "Testing: 14 automated unit tests checking formatting with mocked LLM and search\n"
+            "Deployment Status: Local environment\n"
+        )
+        sec_1_2 = filter_grounded_college_section("1.2 Introduction to Domain", "The platform acts as an AI Research Assistant for literature synthesis.", facts)
+        self.assertNotIn("[Add your", sec_1_2)
+        self.assertIn("AI Research Assistant", sec_1_2)
+
+        sec_5_5 = filter_grounded_college_section("5.5 External Integrations", "The architecture integrates with Tavily, Groq, and Gmail SMTP services.", facts)
+        self.assertNotIn("[Add your", sec_5_5)
+        self.assertIn("Tavily", sec_5_5)
+        self.assertIn("Groq", sec_5_5)
+
+        sec_7_4 = filter_grounded_college_section("7.4 Core Modules", "The application core modules include auth, pipeline, and export subsystems.", facts)
+        self.assertNotIn("[Add your", sec_7_4)
+        self.assertIn("auth", sec_7_4)
+
+        sec_10_1 = filter_grounded_college_section("10.1 Deployment Overview", "The system operates in a Local environment for development and evaluation.", facts)
+        self.assertNotIn("[Add your", sec_10_1)
+        self.assertIn("Local environment", sec_10_1)
+
+    def test_regression_item3_unsupported_claims_rejected(self):
+        """Item 3: Drop sentences with CI runs, latency, throughput, success rates, monolithic pipelines, etc."""
+        facts = "Project Name: CiteBolt\nCore Domain: AI Research\nTesting: automated unit tests"
+        bad_sentences = (
+            "Automated CI runs occur on every commit. "
+            "The system records execution time per agent and throughput. "
+            "Latency is under 200ms with high success rates. "
+            "Unlike monolithic pipelines, this architecture handles complex workloads."
+        )
+        filtered = filter_grounded_college_section("8.1 Testing Overview", bad_sentences, facts)
+        self.assertNotIn("CI runs", filtered)
+        self.assertNotIn("every commit", filtered)
+        self.assertNotIn("throughput", filtered)
+        self.assertNotIn("Latency", filtered)
+        self.assertNotIn("monolithic pipelines", filtered)
+
+    def test_regression_item4_test_count_only_in_section_8(self):
+        """Item 4: Test count is stated in Section 8 and removed from abstract and summary sections."""
+        from app.agents.section_engine import get_verified_test_count
+        test_count = get_verified_test_count()
+        sec_8_2 = filter_grounded_college_section("8.2 Test Objectives", "Testing covers end-to-end integration across all endpoints.", "Project Name: CiteBolt")
+        self.assertIn(f"{test_count} automated unit tests", sec_8_2)
+        summary_ch1 = filter_grounded_college_section("1.7 Summary", "Summary of the chapter.", "Project Name: CiteBolt")
+        self.assertNotIn(f"{test_count} tests", summary_ch1)
+
+    def test_regression_item5_dangling_text_and_chapter_summaries(self):
+        """Item 5: Drop sentences starting with 'It also', 'The chapter also', or ending with bare 'N.M.' token.
+        Each chapter summary describes its own chapter."""
+        facts = "Project Name: CiteBolt\nCore Domain: AI Research"
+        dangling_text = "The chapter also covers future directions. It also provides extra details. Here is 4.2."
+        filtered = filter_grounded_college_section("4.8 Summary", dangling_text, facts)
+        self.assertNotIn("The chapter also", filtered)
+        self.assertNotIn("It also", filtered)
+        self.assertNotIn("4.2.", filtered)
+
+        for ch, sec in [
+            (1, "1.7 Summary"),
+            (3, "3.8 Summary"),
+            (4, "4.8 Summary"),
+            (5, "5.6 Summary"),
+            (6, "6.10 Summary"),
+            (7, "7.6 Summary"),
+            (8, "8.8 Summary"),
+            (9, "9.8 Summary"),
+            (10, "10.8 Summary"),
+        ]:
+            summary = filter_grounded_college_section(sec, "Chapter summary.", facts)
+            self.assertIn(f"## {sec}", summary)
+            self.assertNotIn("The chapter also", summary)
+            self.assertNotIn("[Add your", summary)
+
+    def test_regression_item6_section_1_5_scope(self):
+        """Item 6: Section 1.5 includes in-scope and out-of-scope boundaries before roadmap."""
+        sec_1_5 = section_engine.build_deterministic_roadmap_section("CiteBolt", {})
+        self.assertIn("in-scope", sec_1_5.lower())
+        self.assertIn("out of scope", sec_1_5.lower())
+        self.assertIn("cloud deployment", sec_1_5.lower())
+
+    def test_regression_item7_abstract_no_unsupported_claims(self):
+        """Item 7: Abstract describes what was built without claims about existing solutions or successful end-to-end generation."""
+        abstract = section_engine.synthesize_academic_abstract("CiteBolt", {}, "AI Research Assistant")
+        self.assertNotIn("existing solutions", abstract.lower())
+        self.assertNotIn("successful end-to-end", abstract.lower())
+        self.assertIn("CiteBolt", abstract)
+
 
 if __name__ == "__main__":
     unittest.main()
