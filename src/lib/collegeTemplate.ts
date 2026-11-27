@@ -29,6 +29,11 @@ export interface CollegeFrontMatter {
   databaseTables?: string;
   mainEndpoints?: string;
   relatedWork?: string;
+  technologies?: string;
+  tests?: string;
+  features?: string;
+  installCommands?: string;
+  useCiteboltPreset?: boolean;
 }
 
 export const DEFAULT_COLLEGE_FRONT_MATTER: CollegeFrontMatter = {
@@ -49,6 +54,24 @@ export const DEFAULT_COLLEGE_FRONT_MATTER: CollegeFrontMatter = {
   databaseTables: "",
   mainEndpoints: "",
   relatedWork: "",
+  technologies: "",
+  tests: "",
+  features: "",
+  installCommands: "",
+  useCiteboltPreset: false,
+};
+
+export const CITEBOLT_PRESET_FRONT_MATTER: Partial<CollegeFrontMatter> = {
+  projectTitle: "CiteBolt",
+  degree: "Bachelor of Technology in Computer Engineering",
+  deploymentStatus: "Local development environment",
+  technologies: "FastAPI, React, Vite, Tailwind CSS, SQLite, SQLAlchemy, LangGraph, Tavily Search API, Groq LLM API, Gmail SMTP, ReportLab, python-docx, pytest",
+  databaseTables: "users, reports, research_sources, audit_logs, otp_codes, run_checkpoints",
+  mainEndpoints: "POST /api/runs, GET /api/runs/{id}, POST /api/auth/otp, POST /api/auth/verify-otp, GET /api/runs/{id}/export/pdf, GET /api/runs/{id}/export/docx",
+  tests: "automated pytest unit tests with mocked LLM and search responses",
+  features: "Autonomous multi-agent research pipeline (Research, Analysis, Writer), academic citation verification, local SQLite persistence, document export in PDF and DOCX",
+  installCommands: "cd backend && python -m venv .venv && .venv\\Scripts\\activate && pip install -r requirements.txt && uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload\ncd frontend && npm install && npm run dev",
+  useCiteboltPreset: true,
 };
 
 export const COLLEGE_OUTLINE_TEMPLATE: OutlineSection[] = [

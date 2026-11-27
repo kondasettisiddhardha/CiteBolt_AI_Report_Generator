@@ -18,6 +18,7 @@ import {
   scaleOutlineWords,
   DEFAULT_COLLEGE_FRONT_MATTER,
   cleanTopicForTitle,
+  CITEBOLT_PRESET_FRONT_MATTER,
 } from "@/lib/collegeTemplate";
 
 export type { OutlineSection, TeamMember, CollegeFrontMatter };
@@ -251,6 +252,18 @@ export default function TemplatePanel({
     if (outline) {
       onUpdate(outline, updated, true, templateName);
     }
+  };
+
+  const handleApplyCiteboltPreset = () => {
+    const updated: CollegeFrontMatter = {
+      ...collegeForm,
+      ...CITEBOLT_PRESET_FRONT_MATTER,
+    };
+    setCollegeForm(updated);
+    if (outline) {
+      onUpdate(outline, updated, true, templateName);
+    }
+    toast.success("Applied CiteBolt project facts preset");
   };
 
   const handleAddMember = () => {
@@ -570,12 +583,23 @@ export default function TemplatePanel({
 
           {/* About your project (optional facts to prevent hallucinated components) */}
           <div className="border-t border-line pt-3 mt-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-accent">
-              About your project (optional facts)
-            </h4>
-            <p className="mt-0.5 text-[11px] text-muted">
-              Supplies ground truth for chapters 3-10 so technical details (tables, endpoints, deployment) are never invented.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-accent">
+                  About your project (optional facts)
+                </h4>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Supplies ground truth for chapters 3-10 so technical details (tables, endpoints, deployment) are never invented.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleApplyCiteboltPreset}
+                className="self-start sm:self-auto inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface-hover hover:border-accent transition-colors"
+              >
+                Use CiteBolt project facts
+              </button>
+            </div>
             <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
               <div>
                 <label className="block text-[11px] font-medium text-muted">Degree Name (Title page)</label>
@@ -622,6 +646,39 @@ export default function TemplatePanel({
               </div>
 
               <div className="sm:col-span-2">
+                <label className="block text-[11px] font-medium text-muted">Technologies & Libraries</label>
+                <input
+                  type="text"
+                  value={collegeForm.technologies || ""}
+                  onChange={(e) => handleCollegeFieldChange("technologies", e.target.value)}
+                  placeholder="e.g. Python, PyTorch, Scikit-learn, React, PostgreSQL"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-medium text-muted">Key System Features</label>
+                <input
+                  type="text"
+                  value={collegeForm.features || ""}
+                  onChange={(e) => handleCollegeFieldChange("features", e.target.value)}
+                  placeholder="e.g. Predictive pattern modeling, spatial hotspot clustering, automated alert generation"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-medium text-muted">Testing Framework & Scope</label>
+                <input
+                  type="text"
+                  value={collegeForm.tests || ""}
+                  onChange={(e) => handleCollegeFieldChange("tests", e.target.value)}
+                  placeholder="e.g. automated pytest unit tests with mocked API responses"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
                 <label className="block text-[11px] font-medium text-muted">Database Tables</label>
                 <input
                   type="text"
@@ -640,6 +697,17 @@ export default function TemplatePanel({
                   onChange={(e) => handleCollegeFieldChange("mainEndpoints", e.target.value)}
                   placeholder="e.g. POST /api/runs, GET /api/runs/{id}, POST /api/auth/otp"
                   className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-fg focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-medium text-muted">Installation & Run Commands</label>
+                <textarea
+                  rows={2}
+                  value={collegeForm.installCommands || ""}
+                  onChange={(e) => handleCollegeFieldChange("installCommands", e.target.value)}
+                  placeholder="e.g. pip install -r requirements.txt && python app.py"
+                  className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-xs text-fg font-mono focus:outline-none"
                 />
               </div>
 

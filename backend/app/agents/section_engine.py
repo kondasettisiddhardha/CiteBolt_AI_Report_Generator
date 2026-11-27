@@ -134,6 +134,41 @@ WORD_NUMBERS: dict[str, int] = {
     "eighteen": 18, "nineteen": 19, "twenty": 20, "twenty-five": 25, "twenty five": 25,
 }
 
+GENERIC_GLOSSARY: list[dict[str, str]] = [
+    {
+        "term": "SRS",
+        "definition": "Software Requirements Specification defining functional scope, operational parameters, and technical constraints.",
+    },
+    {
+        "term": "HLD / LLD",
+        "definition": "High-Level Design and Low-Level Design architectural specifications defining modules, interfaces, and data models.",
+    },
+    {
+        "term": "API",
+        "definition": "Application Programming Interface enabling structured communication and data exchange between software components.",
+    },
+    {
+        "term": "UI / UX",
+        "definition": "User Interface and User Experience design principles, layout structures, and presentation components.",
+    },
+    {
+        "term": "CRUD",
+        "definition": "Create, Read, Update, and Delete data lifecycle operations executed on persistent storage entities.",
+    },
+    {
+        "term": "DBMS",
+        "definition": "Database Management System providing structured data persistence, transaction handling, and schema management.",
+    },
+    {
+        "term": "MVC",
+        "definition": "Model-View-Controller architectural pattern separating internal data representations from user interfaces.",
+    },
+    {
+        "term": "Unit Test",
+        "definition": "Automated verification procedure validating the correctness of individual modular software components in isolation.",
+    },
+]
+
 APPENDIX_B_GLOSSARY: list[dict[str, str]] = [
     {
         "term": "LLM",
@@ -170,9 +205,33 @@ APPENDIX_B_GLOSSARY: list[dict[str, str]] = [
 ]
 
 
-def format_appendix_b_glossary() -> str:
+def is_citebolt_project(topic: str = "", front_matter: dict[str, Any] | None = None, fact_sheet: str = "") -> bool:
+    """Determine whether the project is CiteBolt preset or a custom user project."""
+    fm = front_matter or {}
+    if fm.get("useCiteboltPreset") is True or str(fm.get("useCiteboltPreset", "")).lower() == "true":
+        return True
+    if fm.get("useCiteboltPreset") is False or str(fm.get("useCiteboltPreset", "")).lower() == "false":
+        return False
+    combined = f"{topic} {fm.get('projectTitle', '')} {fact_sheet}".lower()
+    if "citebolt" in combined:
+        return True
+    if any(k in combined for k in ["6 tables", "25 endpoints", "3 agents", "14 unit tests"]):
+        return True
+    clean_t = topic.strip().lower()
+    clean_p = str(fm.get("projectTitle", "")).strip().lower()
+    known_section_titles = {
+        "10.3 installation process", "4.6 data design", "7.3 data dictionary",
+        "7.3 data dictionary / schema details", "1.5 report organization", "1.5 scope of the system"
+    }
+    if (clean_t and clean_t not in known_section_titles and clean_t not in ("test", "test project")) or (clean_p and "citebolt" not in clean_p):
+        return False
+    return True
+
+
+def format_appendix_b_glossary(is_citebolt: bool = False) -> str:
     rows = ["| Term | Definition |", "| :--- | :--- |"]
-    for item in APPENDIX_B_GLOSSARY:
+    glossary = APPENDIX_B_GLOSSARY if is_citebolt else GENERIC_GLOSSARY
+    for item in glossary:
         rows.append(f"| **{item['term']}** | {item['definition']} |")
     return "## Appendix B: Glossary\n\n" + "\n".join(rows)
 
@@ -421,20 +480,72 @@ def parse_count_mention(match_text: str) -> int | None:
     return WORD_NUMBERS.get(t)
 
 
-def build_deterministic_data_design_section(sec_title: str, heading_prefix: str = "##") -> str:
-    table_names_str = ", ".join(f"`{t}`" for t in VERIFIED_TABLE_NAMES[:-1]) + f", and `{VERIFIED_TABLE_NAMES[-1]}`"
-    rels_str = ", ".join(f"`{rel}`" for rel in VERIFIED_SCHEMA_RELATIONSHIPS)
-    return f"""{heading_prefix} {sec_title}
+def build_deterministic_data_design_section(
+    sec_title: str,
+    heading_prefix_or_fm: Any = "##",
+    topic: str = "",
+    front_matter: dict[str, Any] | None = None,
+) -> str:
+    if isinstance(heading_prefix_or_fm, dict):
+        fm = heading_prefix_or_fm
+        heading_prefix = "##"
+    else:
+        fm = front_matter or {}
+        heading_prefix = str(heading_prefix_or_fm)
+
+    if not sec_title.startswith("4.6") and not sec_title.lower().startswith("chapter"):
+        display_title = f"4.6 {sec_title}" if sec_title else "4.6 Data Design"
+    else:
+        display_title = sec_title
+
+    is_citebolt = is_citebolt_project(topic or sec_title, fm)
+    if is_citebolt:
+        table_names_str = ", ".join(f"`{t}`" for t in VERIFIED_TABLE_NAMES[:-1]) + f", and `{VERIFIED_TABLE_NAMES[-1]}`"
+        rels_str = ", ".join(f"`{rel}`" for rel in VERIFIED_SCHEMA_RELATIONSHIPS)
+        return f"""{heading_prefix} {display_title}
 
 The database architecture consists of {VERIFIED_TABLE_COUNT} relational tables: {table_names_str}. Verified foreign key relationships in the data model link {rels_str}, ensuring user-scoped isolation for execution runs, report templates, and interface settings in local SQLite storage."""
 
+    db_tables = fm.get("databaseTables", "").strip()
+    if db_tables:
+        table_names = [t.strip() for t in re.split(r"[,;]+", db_tables) if t.strip()]
+        if table_names:
+            if len(table_names) > 1:
+                table_names_str = ", ".join(f"`{t}`" for t in table_names[:-1]) + f", and `{table_names[-1]}`"
+            else:
+                table_names_str = f"`{table_names[0]}`"
+            return f"""{heading_prefix} {display_title}
 
-def build_deterministic_data_dictionary_section(sec_title: str, heading_prefix: str = "##") -> str:
-    table_rows = "\n".join(
-        f"| {t['name']} | {t['columns']} | {t['purpose']} |"
-        for t in VERIFIED_DATABASE_TABLES
-    )
-    return f"""{heading_prefix} {sec_title}
+The database architecture consists of relational tables: {table_names_str}. The data model ensures persistent storage, entity integrity, and structured access for the application."""
+
+    return f"{heading_prefix} {display_title}\n\n[Add your Data Design here.]"
+
+
+def build_deterministic_data_dictionary_section(
+    sec_title: str,
+    heading_prefix_or_fm: Any = "##",
+    topic: str = "",
+    front_matter: dict[str, Any] | None = None,
+) -> str:
+    if isinstance(heading_prefix_or_fm, dict):
+        fm = heading_prefix_or_fm
+        heading_prefix = "##"
+    else:
+        fm = front_matter or {}
+        heading_prefix = str(heading_prefix_or_fm)
+
+    if not sec_title.startswith("7.3") and not sec_title.lower().startswith("chapter"):
+        display_title = f"7.3 {sec_title}" if sec_title else "7.3 Database Design (Data Dictionary)"
+    else:
+        display_title = sec_title
+
+    is_citebolt = is_citebolt_project(topic or sec_title, fm)
+    if is_citebolt:
+        table_rows = "\n".join(
+            f"| {t['name']} | {t['columns']} | {t['purpose']} |"
+            for t in VERIFIED_DATABASE_TABLES
+        )
+        return f"""{heading_prefix} {display_title}
 
 The database schema is implemented using SQLite to provide persistent local storage for report workflows and settings. Table 7.1 describes each database table, its primary attributes, and operational role within the system.
 
@@ -444,12 +555,60 @@ Table 7.1: Database tables
 | :--- | :--- | :--- |
 {table_rows}"""
 
+    db_tables = fm.get("databaseTables", "").strip()
+    if db_tables:
+        table_names = [t.strip() for t in re.split(r"[,;]+", db_tables) if t.strip()]
+        if table_names:
+            table_rows = "\n".join(
+                f"| {t} | id, attributes, created_at | Persistent data records for {t} |"
+                for t in table_names
+            )
+            return f"""{heading_prefix} {display_title}
 
-def build_deterministic_roadmap_section(sec_title: str, heading_prefix: str = "###") -> str:
+Table 7.1 describes each database table, its primary attributes, and operational role within the system.
+
+Table 7.1: Database tables
+
+| Table | Columns | Purpose |
+| :--- | :--- | :--- |
+{table_rows}"""
+
+    return f"{heading_prefix} {display_title}\n\n[Add your Data Dictionary here.]"
+
+
+def build_deterministic_roadmap_section(
+    sec_title: str,
+    heading_prefix_or_fm: Any = "###",
+    topic: str = "",
+    front_matter: dict[str, Any] | None = None,
+) -> str:
+    if isinstance(heading_prefix_or_fm, dict):
+        fm = heading_prefix_or_fm
+        heading_prefix = "###"
+    else:
+        fm = front_matter or {}
+        heading_prefix = str(heading_prefix_or_fm)
+
+    if not sec_title.startswith("1.5") and not sec_title.lower().startswith("chapter"):
+        display_title = f"1.5 {sec_title}" if sec_title else "1.5 Scope of the System"
+    else:
+        display_title = sec_title
+
+    is_citebolt = is_citebolt_project(topic or sec_title, fm)
+    if is_citebolt:
+        scope_para = "The scope of this project encompasses an autonomous multi-agent research report generation system featuring Research, Analysis, and Writer agents coordinated using LangGraph. In-scope capabilities include automated academic literature retrieval via Tavily, structured citation verification, local SQLite persistence with SQLAlchemy, and document export in both ReportLab PDF and DOCX formats. Out of scope for this implementation are multi-tenant cloud deployments, container orchestration, and high-concurrency load testing."
+    else:
+        domain_name, proj_name = extract_domain_and_project(topic or sec_title, fm)
+        features = fm.get("features", "").strip()
+        if features:
+            scope_para = f"The scope of this project encompasses {proj_name}, an engineering system in the domain of {domain_name}. In-scope capabilities include {features}. Out of scope for this implementation are multi-tenant cloud deployments, container orchestration, and high-concurrency load testing."
+        else:
+            scope_para = f"The scope of this project encompasses {proj_name}, an engineering system in the domain of {domain_name}. In-scope capabilities include core functional workflows, data processing, and user interface interactions. Out of scope for this implementation are multi-tenant cloud deployments, container orchestration, and high-concurrency load testing."
+
     lines = [
-        f"{heading_prefix} {sec_title}",
+        f"{heading_prefix} {display_title}",
         "",
-        "The scope of this project encompasses an autonomous multi-agent research report generation system featuring Research, Analysis, and Writer agents coordinated using LangGraph. In-scope capabilities include automated academic literature retrieval via Tavily, structured citation verification, local SQLite persistence with SQLAlchemy, and document export in both ReportLab PDF and DOCX formats. Out of scope for this implementation are multi-tenant cloud deployments, container orchestration, and high-concurrency load testing.",
+        scope_para,
         "",
         "The remainder of this report is organized as follows:",
         "",
@@ -467,31 +626,65 @@ def build_deterministic_roadmap_section(sec_title: str, heading_prefix: str = "#
     return "\n".join(lines)
 
 
-def build_deterministic_installation_section(sec_title: str, heading_prefix: str = "###") -> str:
-    lines = [
-        f"{heading_prefix} {sec_title}",
-        "",
-        "The installation process requires configuring the backend Python runtime and the frontend Node.js environment. First, initialize and launch the backend service:",
-        "",
-        "```bash",
-        "cd backend",
-        "python -m venv .venv",
-        ".venv\\Scripts\\activate",
-        "pip install -r requirements.txt",
-        "uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload",
-        "```",
-        "",
-        "Next, in a separate terminal, install the frontend packages and start the Vite development server:",
-        "",
-        "```bash",
-        "cd frontend",
-        "npm install",
-        "npm run dev",
-        "```",
-        "",
-        "Once both servers are running, the application can be accessed via a web browser at `http://localhost:5173`.",
-    ]
-    return "\n".join(lines)
+def build_deterministic_installation_section(
+    sec_title: str,
+    heading_prefix_or_fm: Any = "###",
+    topic: str = "",
+    front_matter: dict[str, Any] | None = None,
+) -> str:
+    if isinstance(heading_prefix_or_fm, dict):
+        fm = heading_prefix_or_fm
+        heading_prefix = "###"
+    else:
+        fm = front_matter or {}
+        heading_prefix = str(heading_prefix_or_fm)
+
+    if not sec_title.startswith("10.3") and not sec_title.lower().startswith("chapter"):
+        display_title = f"10.3 {sec_title}" if sec_title else "10.3 Installation Process"
+    else:
+        display_title = sec_title
+
+    is_citebolt = is_citebolt_project(topic or sec_title, fm)
+    if is_citebolt:
+        lines = [
+            f"{heading_prefix} {display_title}",
+            "",
+            "The installation process requires configuring the backend Python runtime and the frontend Node.js environment. First, initialize and launch the backend service:",
+            "",
+            "```bash",
+            "cd backend",
+            "python -m venv .venv",
+            ".venv\\Scripts\\activate",
+            "pip install -r requirements.txt",
+            "uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload",
+            "```",
+            "",
+            "Next, in a separate terminal, install the frontend packages and start the Vite development server:",
+            "",
+            "```bash",
+            "cd frontend",
+            "npm install",
+            "npm run dev",
+            "```",
+            "",
+            "Once both servers are running, the application can be accessed via a web browser at `http://localhost:5173`.",
+        ]
+        return "\n".join(lines)
+
+    install_cmd = fm.get("installCommands", "").strip()
+    if install_cmd:
+        lines = [
+            f"{heading_prefix} {display_title}",
+            "",
+            "The installation and execution procedures are conducted using the following commands:",
+            "",
+            "```bash",
+            install_cmd,
+            "```",
+        ]
+        return "\n".join(lines)
+
+    return f"{heading_prefix} {display_title}\n\n[Add your Installation Process here.]"
 
 
 def extract_captions_from_body(body_md: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
@@ -585,6 +778,8 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     proj_name = smart_title(proj_name)
     domain_name = smart_title(domain_name)
     ctx = context.strip() if context else ""
+    is_citebolt = is_citebolt_project(topic, fm)
+
     lines = [
         f"Project Name: {proj_name}",
         f"Core Domain: {domain_name}",
@@ -593,6 +788,8 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
     if degree:
         lines.append(f"Degree: {smart_title(degree)}")
     team_size = fm.get("teamSize", "").strip()
+    if not team_size and fm.get("teamMembers"):
+        team_size = f"{len(fm['teamMembers'])} students"
     if team_size:
         lines.append(f"Team Size: {team_size}")
     duration = fm.get("duration", "").strip()
@@ -602,22 +799,50 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
         lines.append("Project Duration: [Not specified / Blank - do NOT mention any duration, months, or weeks]")
     deploy_status = fm.get("deploymentStatus", "").strip() or "Planned / Local environment"
     lines.append(f"Deployment Status: {deploy_status}")
+
+    tech = fm.get("technologies", "").strip()
+    if tech:
+        lines.append(f"Technologies: {tech}")
+    elif not is_citebolt:
+        lines.append("Technologies: [Not specified - do NOT invent frameworks or libraries]")
+
     db_tables = fm.get("databaseTables", "").strip()
     if db_tables:
         lines.append(f"Database Tables: {db_tables}")
-    else:
+    elif is_citebolt:
         formatted_tables = ", ".join(t["name"] for t in VERIFIED_DATABASE_TABLES)
         lines.append(f"Database Tables: {formatted_tables}.")
-    endpoints = fm.get("mainEndpoints", "").strip()
+    else:
+        lines.append("Database Tables: [Not specified - do NOT invent database tables]")
+
+    endpoints = (fm.get("apiEndpoints") or fm.get("mainEndpoints", "")).strip()
     if endpoints:
         lines.append(f"Main API Endpoints: {endpoints}")
-    else:
+    elif is_citebolt:
         formatted_endpoints = ", ".join(VERIFIED_API_ENDPOINTS)
         lines.append(f"Main Endpoints: {formatted_endpoints}.")
+    else:
+        lines.append("Main Endpoints: [Not specified - do NOT invent API endpoints]")
 
-    lines.append(
-        "How to Run: from backend/: uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload and npm run dev for the frontend."
-    )
+    features = fm.get("features", "").strip()
+    if features:
+        lines.append(f"System Features: {features}")
+
+    tests = fm.get("tests", "").strip()
+    if tests:
+        lines.append(f"Tests: {tests}")
+    elif not is_citebolt:
+        lines.append("Tests: automated pytest unit tests")
+
+    install_cmd = fm.get("installCommands", "").strip()
+    if install_cmd:
+        lines.append(f"How to Run: {install_cmd}")
+    elif is_citebolt:
+        lines.append(
+            "How to Run: from backend/: uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload and npm run dev for the frontend."
+        )
+    else:
+        lines.append("How to Run: [Not specified - do NOT invent run commands]")
 
     if ctx:
         lines.append("Verified Architecture & Project Facts (Ground Truth):")
@@ -625,18 +850,30 @@ def build_compact_project_fact_sheet(topic: str, context: str, front_matter: dic
         lines.append(ctx[:2500])
     else:
         lines.append("Verified Architecture: System specification as outlined in project topic.")
-    lines.extend([
-        "Strict Rule: Ground Truth Rules for ALL Chapters:",
-        "1. Describe project ONLY from facts above; never attribute web snippets to project.",
-        "2. System has 3 agents (Research, Analysis, Writer); NEVER write single-agent.",
-        "3. Duration blank = no time periods. Testing covers 14 unit tests with mocked LLM/search.",
-        "4. Unspecified details: write generically or '[Add your <thing> here.]'. Sec 10.3 uses exact run command.",
-        "NOT TRUE / DO NOT WRITE (Strictly Forbidden Claims):",
-        "- SQLite is the only database (do NOT mention PostgreSQL, MySQL, MongoDB, Redis).",
-        "- 3 agents only (no Synthesis/Formatting/knowledge graph/central controller/citation agent).",
-        "- No 'stores credentials/passwords', 'race conditions', 'lacks built-in persistence', 'concurrent requests'.",
-        "- Section 8.2 objectives cover ONLY the 14 unit tests (no OTP/resume/concurrency).",
-    ])
+
+    if is_citebolt:
+        lines.extend([
+            "Strict Rule: Ground Truth Rules for ALL Chapters:",
+            "1. Describe project ONLY from facts above; never attribute web snippets to project.",
+            "2. System coordinates 3 agents (Research, Analysis, Writer) using LangGraph; NEVER write single-agent.",
+            "3. Duration blank = no time periods. Testing covers 14 unit tests with mocked LLM/search.",
+            "4. Unspecified details: write generically or '[Add your <thing> here.]'. Sec 10.3 uses exact run command.",
+            "NOT TRUE / DO NOT WRITE (Strictly Forbidden Claims):",
+            "- SQLite is the only database (do NOT mention PostgreSQL, MySQL, MongoDB, Redis).",
+            "- 3 agents only (no Synthesis/Formatting/knowledge graph/central controller/citation agent).",
+            "- No 'stores credentials/passwords', 'race conditions', 'lacks built-in persistence', 'concurrent requests'.",
+            "- Section 8.2 objectives cover ONLY the 14 unit tests (no OTP/resume/concurrency).",
+        ])
+    else:
+        lines.extend([
+            "Strict Rule: Ground Truth Rules for ALL Chapters:",
+            "1. Describe project ONLY from facts above; never attribute unverified claims to project.",
+            "2. Duration blank = no time periods.",
+            "3. Unspecified details: write generically or '[Add your <thing> here.]'.",
+            "NOT TRUE / DO NOT WRITE (Strictly Forbidden Claims):",
+            "- Do NOT invent database names, external APIs, or frameworks not listed in facts above.",
+            "- Do NOT claim unverified testing coverage or production certifications.",
+        ])
     return "\n".join(lines)
 
 
@@ -646,6 +883,7 @@ def sanitize_section_markdown(
     project: str = "",
     sources: list[dict[str, Any]] | None = None,
     duration: str = "",
+    is_citebolt: bool = True,
 ) -> str:
     """Clean markdown junk, ASCII diagram frames, author-year citations, fill tokens, and normalize placeholders."""
     # 1. Fill template tokens if any remaining
@@ -731,8 +969,9 @@ def sanitize_section_markdown(
     md = re.sub(r"\[Add your ([^\]]+) here\]", r"[Add your \1 here.]", md)
 
     # 8. Consistency: system has three agents; never write single-agent
-    md = re.sub(r"\bsingle-agent\b", "three-agent", md, flags=re.IGNORECASE)
-    md = re.sub(r"\bsingle agent\b", "three-agent", md, flags=re.IGNORECASE)
+    if is_citebolt:
+        md = re.sub(r"\bsingle-agent\b", "three-agent", md, flags=re.IGNORECASE)
+        md = re.sub(r"\bsingle agent\b", "three-agent", md, flags=re.IGNORECASE)
 
     # 9. Clean duration mentions if duration was blank
     if not duration:
@@ -990,45 +1229,13 @@ BANNED_PHRASES = [
     "asynchronous research task",
 ]
 
-FIXED_GENERIC_ALLOWED_TERMS = {
+GENERIC_ALLOWED_TERMS = {
     "research",
     "analysis",
     "writer",
-    "langgraph",
-    "fastapi",
-    "sqlite",
-    "sqlalchemy",
-    "react",
-    "vite",
-    "tailwind",
-    "groq",
-    "tavily",
-    "gmail smtp",
-    "gmail",
-    "smtp",
-    "jwt",
-    "otp",
-    "reportlab",
-    "python-docx",
-    "pytest",
-    "uvicorn",
-    "python",
-    "typescript",
-    "javascript",
-    "node.js",
-    "nodejs",
-    "node",
-    "html",
-    "css",
-    "json",
-    "rest",
-    "api",
-    "apis",
-    "http",
-    "pydantic",
-    "citebolt",
     "figure",
     "table",
+    "tables",
     "chapter",
     "section",
     "appendix",
@@ -1057,7 +1264,104 @@ FIXED_GENERIC_ALLOWED_TERMS = {
     "modules",
     "service",
     "services",
+    "database",
+    "schema",
+    "model",
+    "models",
+    "architecture",
+    "design",
+    "system",
+    "component",
+    "components",
+    "interface",
+    "interfaces",
+    "implementation",
+    "testing",
+    "test",
+    "tests",
+    "unit",
+    "integration",
+    "validation",
+    "verification",
+    "deployment",
+    "installation",
+    "maintenance",
+    "backup",
+    "recovery",
+    "summary",
+    "introduction",
+    "overview",
+    "conclusion",
+    "scope",
+    "objective",
+    "objectives",
+    "requirement",
+    "requirements",
+    "specification",
+    "specifications",
+    "methodology",
+    "algorithm",
+    "algorithms",
+    "performance",
+    "evaluation",
+    "result",
+    "results",
+    "discussion",
+    "future",
+    "review",
+    "literature",
+    "survey",
+    "problem",
+    "statement",
+    "diagram",
+    "flowchart",
+    "structure",
+    "workflow",
+    "process",
+    "data",
+    "input",
+    "output",
+    "security",
+    "html",
+    "css",
+    "json",
+    "rest",
+    "api",
+    "apis",
+    "http",
+    "https",
+    "pytest",
+    "python",
 }
+
+CITEBOLT_ALLOWED_TERMS = {
+    "citebolt",
+    "langgraph",
+    "fastapi",
+    "sqlite",
+    "sqlalchemy",
+    "react",
+    "vite",
+    "tailwind",
+    "groq",
+    "tavily",
+    "gmail smtp",
+    "gmail",
+    "smtp",
+    "jwt",
+    "otp",
+    "reportlab",
+    "python-docx",
+    "uvicorn",
+    "pydantic",
+    "typescript",
+    "javascript",
+    "node.js",
+    "nodejs",
+    "node",
+}
+
+FIXED_GENERIC_ALLOWED_TERMS = GENERIC_ALLOWED_TERMS | CITEBOLT_ALLOWED_TERMS
 
 KNOWN_EXTERNAL_PROPER_TOOLS = [
     "postgresql", "postgres", "alembic", "sqlmodel", "mypy", "eslint", "wcag",
@@ -1071,14 +1375,18 @@ KNOWN_EXTERNAL_PROPER_TOOLS = [
 ]
 
 
-def build_allowed_tokens_set(positive_facts: str = "") -> set[str]:
+def build_allowed_tokens_set(positive_facts: str = "", is_citebolt: bool = False) -> set[str]:
     """Build the allowed set from user fact sheet text ONLY + fixed allow-list of generic terms.
     
     IMPORTANT: The 'NOT TRUE / DO NOT WRITE' block must NOT be included in the corpus.
     """
-    allowed = set(FIXED_GENERIC_ALLOWED_TERMS)
-    if positive_facts:
-        clean_positive = re.split(r"NOT TRUE\s*/\s*DO NOT WRITE", positive_facts, flags=re.IGNORECASE)[0]
+    clean_positive = re.split(r"NOT TRUE\s*/\s*DO NOT WRITE", positive_facts, flags=re.IGNORECASE)[0] if positive_facts else ""
+    if not is_citebolt and "citebolt" in clean_positive.lower():
+        is_citebolt = True
+    allowed = set(GENERIC_ALLOWED_TERMS)
+    if is_citebolt:
+        allowed.update(CITEBOLT_ALLOWED_TERMS)
+    if clean_positive:
         words = re.findall(r"[A-Za-z0-9_./\-]+", clean_positive.lower())
         allowed.update(words)
     return allowed
@@ -1590,6 +1898,8 @@ def filter_grounded_college_section(
     is_college: bool = True,
     min_words: int = 2,
     chapter_has_stack_stated: list[bool] | None = None,
+    topic: str = "",
+    front_matter: dict[str, Any] | None = None,
 ) -> str:
     """Post-generation grounding filter applied at the sentence level for college reports.
     
@@ -1599,11 +1909,13 @@ def filter_grounded_college_section(
     if not is_college:
         return sec_md
 
+    fm = front_matter or {}
     clean_sec_title = re.sub(r"^\d+(?:\.\d+)*\s*", "", sec_title).strip()
     norm_sec = sec_title.lower()
     facts_lower = fact_sheet.lower() if fact_sheet else ""
+    is_citebolt = is_citebolt_project(topic or sec_title, fm, fact_sheet)
     positive_facts = re.split(r"NOT TRUE\s*/\s*DO NOT WRITE", fact_sheet, flags=re.IGNORECASE)[0]
-    allowed_tokens = build_allowed_tokens_set(positive_facts=positive_facts)
+    allowed_tokens = build_allowed_tokens_set(positive_facts=positive_facts, is_citebolt=is_citebolt)
 
     sec_md = normalize_unicode_punctuation(sec_md)
 
@@ -1614,11 +1926,11 @@ def filter_grounded_college_section(
 
     # Deterministic Roadmap for Section 1.5 (Task 2 Item 3)
     if re.search(r"^1\.5\b", sec_title):
-        return build_deterministic_roadmap_section(sec_title, heading_prefix)
+        return build_deterministic_roadmap_section(sec_title, heading_prefix, topic=topic, front_matter=fm)
 
     # Deterministic Data Design for Section 4.6 (Item 6)
     if re.search(r"^4\.6\s+data\s+design\b", sec_title, re.IGNORECASE) or norm_sec == "4.6 data design":
-        return build_deterministic_data_design_section(sec_title, heading_prefix)
+        return build_deterministic_data_design_section(sec_title, heading_prefix, topic=topic, front_matter=fm)
 
     # Section 5.4: Database Technology (real path backend/app/models.py and drop migrated automatically)
     if re.search(r"^5\.4\b", sec_title) or (actual_ch_num == 5 and any(k in norm_sec for k in ["5.4", "database technology", "persistence technology"])):
@@ -1628,11 +1940,13 @@ def filter_grounded_college_section(
 
     # 6.6 Team Structure: if team size is 1, single student (Task 2 Item 10)
     if re.search(r"^6\.6\b", sec_title) or (actual_ch_num == 6 and any(k in norm_sec for k in ["team structure", "team organization", "team roles"])):
-        return f"{heading_prefix} {sec_title}\n\nThe project was developed by a single student."
+        members = (fm.get("teamMembers") or []) if isinstance(fm, dict) else []
+        if len(members) <= 1:
+            return f"{heading_prefix} {sec_title}\n\nThe project was developed by a single student."
 
     # Deterministic Data Dictionary for Section 7.3 (Item 5 / 8)
     if re.search(r"^7\.3\b", sec_title) or (actual_ch_num == 7 and "data dictionary" in norm_sec):
-        return build_deterministic_data_dictionary_section(sec_title, heading_prefix)
+        return build_deterministic_data_dictionary_section(sec_title, heading_prefix, topic=topic, front_matter=fm)
 
     # Section 9.4: User feedback must be placeholder unless feedback was supplied in facts
     if any(k in norm_sec for k in ["9.4", "user feedback"]):
@@ -1642,7 +1956,7 @@ def filter_grounded_college_section(
 
     # Deterministic Installation for Section 10.3 (Task 2 Item 7)
     if re.search(r"^10\.3\b", sec_title):
-        return build_deterministic_installation_section(sec_title, heading_prefix)
+        return build_deterministic_installation_section(sec_title, heading_prefix, topic=topic, front_matter=fm)
 
     # Section 10.4: User Guide (pause/resume must not refer to /cancel endpoint)
     if re.search(r"^10\.4\b", sec_title) or (actual_ch_num == 10 and "user guide" in norm_sec):
@@ -2133,7 +2447,7 @@ Deployment challenges primarily center on managing external API rate limits and 
     # Section 1.2: project introduction (Item 2 & 7)
     if re.search(r"^1\.2\b", sec_title):
         if not has_body_text or words_remaining < min_words:
-            if facts_lower and ("fastapi" in facts_lower or "langgraph" in facts_lower or "citebolt" in facts_lower):
+            if is_citebolt and facts_lower and ("fastapi" in facts_lower or "langgraph" in facts_lower or "citebolt" in facts_lower):
                 return f"""{heading_prefix} {sec_title}
 
 CiteBolt is an automated research report generation platform designed to produce structured academic and technical reports from user-specified topics. The system coordinates a multi-agent workflow consisting of Research, Analysis, and Writer agents implemented using LangGraph. The application is built with a FastAPI backend, an SQLite database utilizing SQLAlchemy ORM, and a React frontend with Vite and Tailwind CSS, deployed in a local execution environment."""
@@ -2143,7 +2457,8 @@ CiteBolt is an automated research report generation platform designed to produce
     if re.search(r"^1\.4\b", sec_title):
         bullet_lines = [ln.strip() for ln in result.split("\n") if re.match(r"^\s*[-*+]\s+", ln)]
         if len(bullet_lines) < 4:
-            return f"""{heading_prefix} {sec_title}
+            if is_citebolt:
+                return f"""{heading_prefix} {sec_title}
 
 The primary objectives of the project are defined as follows:
 
@@ -2152,11 +2467,16 @@ The primary objectives of the project are defined as follows:
 - Document compilation and multi-format export supporting both ReportLab PDF and DOCX formats.
 - Per-user rate limits and authentication via email OTP and JWT sessions.
 - Standardized academic college report template with structured chapters, formal front matter, and automated tables of contents."""
+            features = (fm.get("features", "")).strip()
+            if features:
+                feat_bullets = "\n".join(f"- {f.strip()}" for f in re.split(r"[,;]+", features) if f.strip())
+                return f"""{heading_prefix} {sec_title}\n\nThe primary objectives of the project are defined as follows:\n\n{feat_bullets}"""
+            return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
 
     # Section 3.2: User Characteristics (Item 2)
     if re.search(r"^3\.2\b", sec_title) or (actual_ch_num == 3 and "user" in norm_sec):
         if not has_body_text or words_remaining < min_words:
-            if facts_lower:
+            if is_citebolt and facts_lower:
                 return f"""{heading_prefix} {sec_title}
 
 The primary users of the system include undergraduate engineering students, academic researchers, and technical writers who require formatted research reports. Users interact with the platform through a web-based dashboard to configure report parameters, select citation styles, and generate structured documents without manual layout formatting."""
@@ -2165,7 +2485,7 @@ The primary users of the system include undergraduate engineering students, acad
     # Section 3.4: Non-functional Requirements
     if re.search(r"^3\.4\b", sec_title) or (actual_ch_num == 3 and "non-functional" in norm_sec):
         if not has_body_text or words_remaining < min_words:
-            if facts_lower:
+            if is_citebolt and facts_lower:
                 return f"""{heading_prefix} {sec_title}
 
 Non-functional requirements for the platform emphasize local execution security, deterministic document generation, and responsive user feedback. The application ensures data isolation by maintaining SQLite database storage locally on the user workstation. Generation pipelines provide predictable execution through bounded token budgets and rate-limited external API interactions."""
@@ -2179,7 +2499,7 @@ Non-functional requirements for the platform emphasize local execution security,
     # Section 4.7: Component / Low-level Design (Item 2)
     if re.search(r"^4\.7\b", sec_title) or (actual_ch_num == 4 and "component" in norm_sec):
         if not has_body_text or words_remaining < min_words:
-            if facts_lower and ("fastapi" in facts_lower or "langgraph" in facts_lower):
+            if is_citebolt and facts_lower and ("fastapi" in facts_lower or "langgraph" in facts_lower):
                 return f"""{heading_prefix} {sec_title}
 
 The low-level component design organizes the application into distinct modular tiers: FastAPI route handlers for client communication, LangGraph state graph nodes for agent coordination, SQLAlchemy models for local SQLite persistence, and React components for interface interactions. Each component communicates across well-defined interfaces to ensure modularity and maintainability."""
@@ -2188,7 +2508,7 @@ The low-level component design organizes the application into distinct modular t
     # Section 5.5: Third-party Services / External Integrations (Item 2)
     if re.search(r"^5\.5\b", sec_title) or (actual_ch_num == 5 and any(k in norm_sec for k in ["third", "service", "external", "integration"])):
         if not has_body_text or words_remaining < min_words:
-            if any(k in facts_lower for k in ["tavily", "groq", "gmail", "smtp"]):
+            if is_citebolt and any(k in facts_lower for k in ["tavily", "groq", "gmail", "smtp"]):
                 return f"""{heading_prefix} {sec_title}
 
 The system integrates three external services to support its core workflows: the Tavily search API for academic source retrieval, Groq cloud inference for fast LLM execution, and Gmail SMTP for one-time password (OTP) email delivery. All external interactions are authenticated via environment variables and configured with timeout handling."""
@@ -2197,7 +2517,7 @@ The system integrates three external services to support its core workflows: the
     # Section 7.4: Core Modules / Subsystems Implementation (Item 2)
     if re.search(r"^7\.4\b", sec_title) or (actual_ch_num == 7 and any(k in norm_sec for k in ["module", "subsystem"])):
         if not has_body_text or words_remaining < min_words:
-            if facts_lower and ("fastapi" in facts_lower or "langgraph" in facts_lower):
+            if is_citebolt and facts_lower and ("fastapi" in facts_lower or "langgraph" in facts_lower):
                 return f"""{heading_prefix} {sec_title}
 
 The implementation centers on three primary subsystems: the authentication module handling email OTP verification and JWT session tokens, the multi-agent pipeline module coordinating Research, Analysis, and Writer nodes via LangGraph, and the export module compiling structured documents into ReportLab PDF and python-docx formats."""
@@ -2255,7 +2575,7 @@ Automated pytest unit tests were executed with mocked LLM and search responses t
     # Section 10.1: Deployment Overview (Item 2)
     if re.search(r"^10\.1\b", sec_title) or (actual_ch_num == 10 and "introduction" in norm_sec):
         if not has_body_text or words_remaining < min_words:
-            if facts_lower and ("fastapi" in facts_lower or "uvicorn" in facts_lower or "sqlite" in facts_lower):
+            if is_citebolt and facts_lower and ("fastapi" in facts_lower or "uvicorn" in facts_lower or "sqlite" in facts_lower):
                 return f"""{heading_prefix} {sec_title}
 
 The deployment architecture is designed for local workstation execution, combining a Python FastAPI backend served by Uvicorn and a React frontend served by Vite. System persistence is contained entirely within a local SQLite database file, eliminating cloud infrastructure dependencies and external database management overhead."""
@@ -2264,47 +2584,68 @@ The deployment architecture is designed for local workstation execution, combini
     # Sections 10.5 to 10.8: match exact headings (Task 2 Item 6)
     if re.search(r"^10\.5\b", sec_title):
         if not has_body_text or words_remaining < min_words:
-            return f"""{heading_prefix} {sec_title}
+            if is_citebolt:
+                return f"""{heading_prefix} {sec_title}
 
 System maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
+            return f"{heading_prefix} {sec_title}\n\n[Add your Maintenance procedures here.]"
 
     if re.search(r"^10\.6\b", sec_title):
         if not has_body_text or words_remaining < min_words:
-            db_file = get_verified_db_filename()
-            if db_file != "the SQLite database file":
-                db_str = f"the SQLite database file (`{db_file}`)"
-            else:
-                db_str = "the SQLite database file"
-            return f"""{heading_prefix} {sec_title}
+            if is_citebolt:
+                db_file = get_verified_db_filename()
+                if db_file != "the SQLite database file":
+                    db_str = f"the SQLite database file (`{db_file}`)"
+                else:
+                    db_str = "the SQLite database file"
+                return f"""{heading_prefix} {sec_title}
 
 Database backup and recovery is conducted by creating direct filesystem copies of {db_str}. In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
+            return f"{heading_prefix} {sec_title}\n\n[Add your Backup and Recovery procedures here.]"
 
     if re.search(r"^10\.7\b", sec_title):
         if not has_body_text or words_remaining < min_words:
-            return f"""{heading_prefix} {sec_title}
+            if is_citebolt:
+                return f"""{heading_prefix} {sec_title}
 
 Deployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
+            return f"{heading_prefix} {sec_title}\n\n[Add your Challenges During Deployment here.]"
 
     if re.search(r"^10\.8\b", sec_title) or (actual_ch_num == 10 and "summary" in norm_sec):
         if not has_body_text or words_remaining < min_words:
-            return f"""{heading_prefix} {sec_title}
+            if is_citebolt:
+                return f"""{heading_prefix} {sec_title}
 
 The CiteBolt system is deployed locally on a single machine utilizing a FastAPI backend served via Uvicorn and a Vite React frontend. Persistence is managed through a local SQLite database file without cloud infrastructure, Docker containerization, or automated CI/CD pipelines. Operational management consists of direct command-line execution and local process control."""
+            return f"{heading_prefix} {sec_title}\n\n[Add your Deployment and Maintenance Summary here.]"
 
     # Summary sections (Item 5): Each chapter summary must describe its own chapter; if it cannot, use placeholder
     if "summary" in norm_sec and not any(k in norm_sec for k in ["executive summary", "abstract"]):
         if not has_body_text or words_remaining < 10:
-            chapter_summaries = {
-                1: "This chapter presented the foundational overview of the project, including the domain background, core objectives, scope boundaries, and document structure.",
-                3: "This chapter detailed the software requirements specification, establishing functional interface expectations, user characteristics, and non-functional performance constraints.",
-                4: "This chapter outlined the system design, detailing high-level multi-agent architectural layers, low-level component interactions, and the relational database schema.",
-                5: "This chapter specified the technical stack, encompassing backend FastAPI services, Vite React frontend tooling, local SQLite persistence, and third-party integrations.",
-                6: "This chapter described project planning, scheduling timelines, work breakdown structures, and student development responsibilities.",
-                7: "This chapter reviewed the software implementation, detailing the authentication module, multi-agent pipeline orchestration, and verified database tables.",
-                8: "This chapter documented the testing strategy, automated unit test verification, and quality standards established for report generation.",
-                9: "This chapter evaluated the system results, discussing output generation characteristics and execution observations.",
-                10: "This chapter summarized deployment procedures, installation processes, SQLite backup routines, and local operational constraints.",
-            }
+            if is_citebolt:
+                chapter_summaries = {
+                    1: "This chapter presented the foundational overview of the project, including the domain background, core objectives, scope boundaries, and document structure.",
+                    3: "This chapter detailed the software requirements specification, establishing functional interface expectations, user characteristics, and non-functional performance constraints.",
+                    4: "This chapter outlined the system design, detailing high-level multi-agent architectural layers, low-level component interactions, and the relational database schema.",
+                    5: "This chapter specified the technical stack, encompassing backend FastAPI services, Vite React frontend tooling, local SQLite persistence, and third-party integrations.",
+                    6: "This chapter described project planning, scheduling timelines, work breakdown structures, and student development responsibilities.",
+                    7: "This chapter reviewed the software implementation, detailing the authentication module, multi-agent pipeline orchestration, and verified database tables.",
+                    8: "This chapter documented the testing strategy, automated unit test verification, and quality standards established for report generation.",
+                    9: "This chapter evaluated the system results, discussing output generation characteristics and execution observations.",
+                    10: "This chapter summarized deployment procedures, installation processes, SQLite backup routines, and local operational constraints.",
+                }
+            else:
+                chapter_summaries = {
+                    1: "This chapter presented the foundational overview of the project, including the domain background, core objectives, scope boundaries, and document structure.",
+                    3: "This chapter detailed the software requirements specification, establishing functional interface expectations, user characteristics, and non-functional performance constraints.",
+                    4: "This chapter outlined the system design, detailing high-level architectural layers, low-level component interactions, and data models.",
+                    5: "This chapter specified the technical stack, encompassing core backend frameworks, frontend tooling, persistence mechanisms, and third-party integrations.",
+                    6: "This chapter described project planning, scheduling timelines, work breakdown structures, and development responsibilities.",
+                    7: "This chapter reviewed the software implementation, detailing core modules, subsystem interactions, and persistent data tables.",
+                    8: "This chapter documented the testing strategy, automated unit test verification, and quality standards established for report generation.",
+                    9: "This chapter evaluated the system results, discussing output generation characteristics and execution observations.",
+                    10: "This chapter summarized deployment procedures, installation processes, backup routines, and operational constraints.",
+                }
             if actual_ch_num in chapter_summaries:
                 return f"{heading_prefix} {sec_title}\n\n{chapter_summaries[actual_ch_num]}"
             return f"{heading_prefix} {sec_title}\n\n[Add your {clean_sec_title} here.]"
@@ -2572,7 +2913,8 @@ def format_front_matter_section(
         )
 
     if "appendix b" in norm or "glossary" in norm:
-        return format_appendix_b_glossary()
+        is_cb = is_citebolt_project(topic, fm)
+        return format_appendix_b_glossary(is_citebolt=is_cb)
 
     if "references" in norm:
         return None  # Compiled automatically from cited sources
@@ -2580,19 +2922,32 @@ def format_front_matter_section(
     return None
 
 
-def synthesize_academic_abstract(proj_name: str, domain_name: Any = "AI Research Assistant", facts: str = "") -> str:
+def synthesize_academic_abstract(proj_name: str, domain_name: Any = "AI Research Assistant", facts: str = "", is_citebolt: bool | None = None) -> str:
     """Synthesize a grounded academic abstract describing only what was built and what tests check."""
     if isinstance(domain_name, dict):
         domain_name = domain_name.get("domain", "") or "AI Research Assistant"
     domain_str = str(domain_name).strip() or "AI Research Assistant"
+    if is_citebolt is None:
+        is_citebolt = is_citebolt_project(proj_name, fact_sheet=facts)
+
+    if is_citebolt:
+        return (
+            f"This project presents the design, architecture, and implementation of {proj_name}, "
+            f"an automated research report generation platform in the domain of {domain_str}. "
+            f"The system coordinates an autonomous multi-agent workflow consisting of Research, Analysis, "
+            f"and Writer agents orchestrated using LangGraph. The backend service is built using FastAPI "
+            f"with SQLite database storage managed through SQLAlchemy ORM, and the user interface is developed "
+            f"in React with Tailwind CSS and Vite. Document compilation produces publication-ready reports in "
+            f"both ReportLab PDF and DOCX formats with automated citation numbering and grounding verification. "
+            f"System verification is conducted through automated pytest unit tests with mocked LLM and search responses."
+        )
+
     return (
         f"This project presents the design, architecture, and implementation of {proj_name}, "
-        f"an automated research report generation platform in the domain of {domain_str}. "
-        f"The system coordinates an autonomous multi-agent workflow consisting of Research, Analysis, "
-        f"and Writer agents orchestrated using LangGraph. The backend service is built using FastAPI "
-        f"with SQLite database storage managed through SQLAlchemy ORM, and the user interface is developed "
-        f"in React with Tailwind CSS and Vite. Document compilation produces publication-ready reports in "
-        f"both ReportLab PDF and DOCX formats with automated citation numbering and grounding verification. "
+        f"an engineering software system in the domain of {domain_str}. "
+        f"The application provides structured operational workflows, data processing capabilities, "
+        f"and user-oriented presentation interfaces. The system architecture is organized into modular "
+        f"components to ensure separation of concerns, reliable data management, and operational maintainability. "
         f"System verification is conducted through automated pytest unit tests with mocked LLM and search responses."
     )
 
@@ -2607,9 +2962,10 @@ def filter_grounded_college_abstract(
     if isinstance(domain_name, dict):
         domain_name = domain_name.get("domain", "") or "AI Research Assistant"
     domain_str = str(domain_name).strip() or "AI Research Assistant"
+    is_citebolt = is_citebolt_project(proj_name, fact_sheet=fact_sheet)
 
     if not abs_text:
-        synth = synthesize_academic_abstract(proj_name, domain_str, fact_sheet)
+        synth = synthesize_academic_abstract(proj_name, domain_str, fact_sheet, is_citebolt=is_citebolt)
         return f"## Abstract\n\n{synth}\n\nKeywords: {proj_name}, {domain_str}, software architecture, engineering implementation, analysis, system evaluation"
 
     # 1. Unicode normalization
@@ -3367,9 +3723,12 @@ Return ONLY bullet points starting with '- '."""
                 record_section_progress(sec_title)
                 continue
 
+            heading_prefix = "#" * min(3, sec_lvl + 1)
+            is_cb_project = is_citebolt_project(topic, front_matter, ch_facts)
+
             # Deterministic Roadmap for Section 1.5 (Task 2 Item 3)
             if re.search(r"^1\.5\b", sec_title):
-                sec_md = build_deterministic_roadmap_section(sec_title, heading_prefix)
+                sec_md = build_deterministic_roadmap_section(sec_title, heading_prefix, topic=topic, front_matter=front_matter)
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -3377,7 +3736,7 @@ Return ONLY bullet points starting with '- '."""
 
             # Deterministic Data Design for Section 4.6 (Item 6)
             if re.search(r"^4\.6\b", sec_title) or (actual_ch_num == 4 and "data design" in norm_sec):
-                sec_md = build_deterministic_data_design_section(sec_title, heading_prefix)
+                sec_md = build_deterministic_data_design_section(sec_title, heading_prefix, topic=topic, front_matter=front_matter)
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -3395,7 +3754,7 @@ Return ONLY bullet points starting with '- '."""
 
             # Deterministic Data Dictionary for Section 7.3 (Item 5 / 8)
             if re.search(r"^7\.3\b", sec_title) or (actual_ch_num == 7 and "data dictionary" in norm_sec):
-                sec_md = build_deterministic_data_dictionary_section(sec_title, heading_prefix)
+                sec_md = build_deterministic_data_dictionary_section(sec_title, heading_prefix, topic=topic, front_matter=front_matter)
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -3413,7 +3772,7 @@ Return ONLY bullet points starting with '- '."""
 
             # Deterministic Installation for Section 10.3 (Task 2 Item 7)
             if re.search(r"^10\.3\b", sec_title):
-                sec_md = build_deterministic_installation_section(sec_title, heading_prefix)
+                sec_md = build_deterministic_installation_section(sec_title, heading_prefix, topic=topic, front_matter=front_matter)
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -3421,38 +3780,50 @@ Return ONLY bullet points starting with '- '."""
 
             # Deterministic / Grounded deployment sections 10.5 to 10.8 (Task 2 Item 6)
             if re.search(r"^10\.5\b", sec_title):
-                sec_md = f"""{heading_prefix} {sec_title}
+                if is_cb_project:
+                    sec_md = f"""{heading_prefix} {sec_title}
 
 System maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
+                else:
+                    sec_md = f"{heading_prefix} {sec_title}\n\n[Add your Maintenance procedures here.]"
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
                 continue
 
             if re.search(r"^10\.6\b", sec_title):
-                db_file = get_verified_db_filename()
-                db_str = f"the SQLite database file (`{db_file}`)" if db_file != "the SQLite database file" else "the SQLite database file"
-                sec_md = f"""{heading_prefix} {sec_title}
+                if is_cb_project:
+                    db_file = get_verified_db_filename()
+                    db_str = f"the SQLite database file (`{db_file}`)" if db_file != "the SQLite database file" else "the SQLite database file"
+                    sec_md = f"""{heading_prefix} {sec_title}
 
 Database backup and recovery is conducted by creating direct filesystem copies of {db_str}. In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
+                else:
+                    sec_md = f"{heading_prefix} {sec_title}\n\n[Add your Backup and Recovery procedures here.]"
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
                 continue
 
             if re.search(r"^10\.7\b", sec_title):
-                sec_md = f"""{heading_prefix} {sec_title}
+                if is_cb_project:
+                    sec_md = f"""{heading_prefix} {sec_title}
 
 Deployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
+                else:
+                    sec_md = f"{heading_prefix} {sec_title}\n\n[Add your Challenges During Deployment here.]"
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
                 continue
 
             if re.search(r"^10\.8\b", sec_title) or (actual_ch_num == 10 and "summary" in norm_sec):
-                sec_md = f"""{heading_prefix} {sec_title}
+                if is_cb_project:
+                    sec_md = f"""{heading_prefix} {sec_title}
 
 The CiteBolt system is deployed locally on a single machine utilizing a FastAPI backend served via Uvicorn and a Vite React frontend. Persistence is managed through a local SQLite database file without cloud infrastructure, Docker containerization, or automated CI/CD pipelines. Operational management consists of direct command-line execution and local process control."""
+                else:
+                    sec_md = f"{heading_prefix} {sec_title}\n\n[Add your Deployment and Maintenance Summary here.]"
                 rendered_subsections.append((s_idx, sec_md.strip()))
                 persist_section_to_db(s_idx, sec_md.strip())
                 record_section_progress(sec_title)
@@ -3585,7 +3956,14 @@ The CiteBolt system is deployed locally on a single machine utilizing a FastAPI 
                 rules.append("- USER FEEDBACK (CRITICAL): If user feedback or survey results are not in the Project Facts, write ONLY: '[Add your user feedback results here.]'. Do NOT invent survey questions, respondent counts, or satisfaction scores.")
 
             if actual_ch_num == 10 and ("10.3" in sec_title or "run" in norm_sec or "deployment" in norm_sec or "operation" in norm_sec):
-                rules.append("- HOW TO RUN (CRITICAL): State the exact commands to run the system: from backend/: `uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload` and `npm run dev` for the frontend.")
+                if is_cb_project:
+                    rules.append("- HOW TO RUN (CRITICAL): State the exact commands to run the system: from backend/: `uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload` and `npm run dev` for the frontend.")
+                else:
+                    inst_cmd = (front_matter or {}).get("installCommands", "").strip() if isinstance(front_matter, dict) else ""
+                    if inst_cmd:
+                        rules.append(f"- HOW TO RUN (CRITICAL): State the exact commands to run the system: {inst_cmd}")
+                    else:
+                        rules.append("- HOW TO RUN (CRITICAL): If run commands are not in facts, write placeholder: '[Add your Installation Process here.]'. Do NOT invent commands.")
 
             writer_prompt = f"""You are an elite academic and technical writer. Write ONE section of a detailed college engineering report.
 Overall Project: {proj_name}
@@ -3771,6 +4149,8 @@ Continue:"""
                 is_college=True,
                 min_words=25 if is_thin_sec else 2,
                 chapter_has_stack_stated=chapter_has_stack_stated,
+                topic=topic,
+                front_matter=front_matter,
             )
             sec_md = normalize_college_captions_and_placeholders(sec_md)
 
@@ -4090,6 +4470,8 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
         except Exception:
             pass
 
+        is_cb = is_citebolt_project(topic, fm, r.context or "")
+
         for idx, sec in enumerate(outline):
             if sec.get("completed") and sec.get("content"):
                 continue
@@ -4107,11 +4489,12 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
                 continue
 
             if "abstract" in norm_t:
-                synth = synthesize_academic_abstract(proj_name, domain_name)
+                synth = synthesize_academic_abstract(proj_name, domain_name, r.context or "", is_citebolt=is_cb)
                 sec["content"] = filter_grounded_college_abstract(
                     f"## Abstract\n\n{synth}",
                     proj_name=proj_name,
                     domain_name=domain_name,
+                    fact_sheet=r.context or "",
                 )
                 sec["completed"] = True
                 continue
@@ -4121,11 +4504,11 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
                 sec["completed"] = True
                 continue
             if re.search(r"^1\.5\b", title):
-                sec["content"] = build_deterministic_roadmap_section(title, heading_prefix)
+                sec["content"] = build_deterministic_roadmap_section(title, heading_prefix, topic=topic, front_matter=fm)
                 sec["completed"] = True
                 continue
             if re.search(r"^4\.6\b", title) or "data design" in norm_t:
-                sec["content"] = build_deterministic_data_design_section(title, heading_prefix)
+                sec["content"] = build_deterministic_data_design_section(title, heading_prefix, topic=topic, front_matter=fm)
                 sec["completed"] = True
                 continue
             if re.search(r"^6\.6\b", title) or "team structure" in norm_t:
@@ -4133,29 +4516,41 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
                 sec["completed"] = True
                 continue
             if re.search(r"^7\.3\b", title) or "data dictionary" in norm_t:
-                sec["content"] = build_deterministic_data_dictionary_section(title, heading_prefix)
+                sec["content"] = build_deterministic_data_dictionary_section(title, heading_prefix, topic=topic, front_matter=fm)
                 sec["completed"] = True
                 continue
             if re.search(r"^10\.3\b", title):
-                sec["content"] = build_deterministic_installation_section(title, heading_prefix)
+                sec["content"] = build_deterministic_installation_section(title, heading_prefix, topic=topic, front_matter=fm)
                 sec["completed"] = True
                 continue
             if re.search(r"^10\.5\b", title):
-                sec["content"] = f"""{heading_prefix} {title}\n\nSystem maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
+                if is_cb:
+                    sec["content"] = f"""{heading_prefix} {title}\n\nSystem maintenance is performed through manual process restarts following code changes or configuration updates. The FastAPI backend running via Uvicorn and the Vite frontend development server are restarted directly from the terminal, without automated process supervisors or container orchestration."""
+                else:
+                    sec["content"] = f"{heading_prefix} {title}\n\n[Add your Maintenance procedures here.]"
                 sec["completed"] = True
                 continue
             if re.search(r"^10\.6\b", title):
-                db_file = get_verified_db_filename()
-                db_str = f"the SQLite database file (`{db_file}`)" if db_file != "the SQLite database file" else "the SQLite database file"
-                sec["content"] = f"""{heading_prefix} {title}\n\nDatabase backup and recovery is conducted by creating direct filesystem copies of {db_str}. In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
+                if is_cb:
+                    db_file = get_verified_db_filename()
+                    db_str = f"the SQLite database file (`{db_file}`)" if db_file != "the SQLite database file" else "the SQLite database file"
+                    sec["content"] = f"""{heading_prefix} {title}\n\nDatabase backup and recovery is conducted by creating direct filesystem copies of {db_str}. In the event of data corruption or migration requirements, recovery is achieved by restoring the copied database file while the backend service is halted, ensuring database file integrity."""
+                else:
+                    sec["content"] = f"{heading_prefix} {title}\n\n[Add your Backup and Recovery procedures here.]"
                 sec["completed"] = True
                 continue
             if re.search(r"^10\.7\b", title):
-                sec["content"] = f"""{heading_prefix} {title}\n\nDeployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
+                if is_cb:
+                    sec["content"] = f"""{heading_prefix} {title}\n\nDeployment challenges primarily center on managing external API rate limits and quotas for LLM inference and web search services. Operating as a local-only deployment mitigates cloud hosting overhead and network ingress risks while restricting service availability to the local workstation."""
+                else:
+                    sec["content"] = f"{heading_prefix} {title}\n\n[Add your Challenges During Deployment here.]"
                 sec["completed"] = True
                 continue
             if re.search(r"^10\.8\b", title):
-                sec["content"] = f"""{heading_prefix} {title}\n\nThe CiteBolt system is deployed locally on a single machine utilizing a FastAPI backend served via Uvicorn and a Vite React frontend. Persistence is managed through a local SQLite database file without cloud infrastructure, Docker containerization, or automated CI/CD pipelines. Operational management consists of direct command-line execution and local process control."""
+                if is_cb:
+                    sec["content"] = f"""{heading_prefix} {title}\n\nThe CiteBolt system is deployed locally on a single machine utilizing a FastAPI backend served via Uvicorn and a Vite React frontend. Persistence is managed through a local SQLite database file without cloud infrastructure, Docker containerization, or automated CI/CD pipelines. Operational management consists of direct command-line execution and local process control."""
+                else:
+                    sec["content"] = f"{heading_prefix} {title}\n\n[Add your Deployment and Maintenance Summary here.]"
                 sec["completed"] = True
                 continue
             if "references" in norm_t:
@@ -4163,7 +4558,7 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
                 sec["completed"] = True
                 continue
 
-            fallback_text = filter_grounded_college_section(title, "", fact_sheet=r.context or "", heading_prefix=heading_prefix)
+            fallback_text = filter_grounded_college_section(title, "", fact_sheet=r.context or "", heading_prefix=heading_prefix, topic=topic, front_matter=fm)
             if not fallback_text or fallback_text.strip() == f"{heading_prefix} {title}":
                 fallback_text = f"{heading_prefix} {title}\n\n[Add your {clean_sec_title} here.]"
             sec["content"] = fallback_text
@@ -4172,7 +4567,7 @@ def finalise_run_from_sections(run_id: str, session: Any = None) -> dict[str, An
         all_items = [str(s.get("content", "")) for s in outline if s.get("content")]
         raw_markdown = "\n\n".join(all_items)
 
-        raw_markdown = sanitize_section_markdown(raw_markdown, domain_name, proj_name, sources=sources, duration=duration)
+        raw_markdown = sanitize_section_markdown(raw_markdown, domain_name, proj_name, sources=sources, duration=duration, is_citebolt=is_cb)
         raw_markdown = normalize_college_captions_and_placeholders(raw_markdown)
         raw_markdown = ensure_unique_figure_and_table_captions(raw_markdown, is_short=False)
         raw_markdown = normalize_college_captions_and_placeholders(raw_markdown)

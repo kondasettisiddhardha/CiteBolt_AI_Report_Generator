@@ -2714,6 +2714,167 @@ Numbered deployment steps:
         self.assertEqual(c_dept_3, "Information Technology")
         self.assertEqual(c_univ_3, "Harvard University")
 
+    def test_non_citebolt_fixture_project_no_citebolt_terms(self):
+        """Item 6: Non-CiteBolt project produces report with zero CiteBolt terms (LangGraph, Tavily, Groq, FastAPI, reports.db, otp_codes)."""
+        topic = "Crime Pattern Analysis and Predictive Policing using Machine Learning"
+        fm = {
+            "projectTitle": "Crime Pattern Analysis and Predictive Policing using Machine Learning",
+            "degree": "Bachelor of Technology in Information Technology",
+            "department": "Department of Information Technology",
+            "university": "City Engineering College",
+            "technologies": "Python, Scikit-learn, Pandas, Flask, PostgreSQL",
+            "databaseTables": "incident_records, police_beats, crime_categories, hotspot_clusters",
+            "apiEndpoints": "GET /api/predictions, POST /api/incidents, GET /api/hotspots",
+            "tests": "automated pytest unit tests validating crime data processing",
+            "features": "Spatial hotspot detection, time-series forecasting, predictive risk assessment",
+            "installCommands": "pip install -r requirements.txt && python app.py",
+            "useCiteboltPreset": False,
+        }
+
+        # 1. Fact Sheet
+        fs = build_compact_project_fact_sheet(topic, "Custom crime prediction model using Random Forest and DBSCAN.", fm)
+        for forbidden in ["LangGraph", "Tavily", "Groq", "FastAPI", "reports.db", "otp_codes", "8001"]:
+            self.assertNotIn(forbidden.lower(), fs.lower())
+        self.assertIn("incident_records", fs)
+        self.assertIn("GET /api/predictions", fs)
+        self.assertIn("pip install -r requirements.txt && python app.py", fs)
+
+        # 2. Deterministic Sections
+        from app.agents.section_engine import (
+            build_deterministic_roadmap_section,
+            build_deterministic_data_design_section,
+            build_deterministic_data_dictionary_section,
+            build_deterministic_installation_section,
+            format_appendix_b_glossary,
+            synthesize_academic_abstract,
+        )
+
+        sec_15 = build_deterministic_roadmap_section("1.5 Scope of the System", "###", topic=topic, front_matter=fm)
+        self.assertIn("Crime Pattern Analysis", sec_15)
+        for forbidden in ["LangGraph", "Tavily", "SQLite", "ReportLab"]:
+            self.assertNotIn(forbidden, sec_15)
+
+        sec_46 = build_deterministic_data_design_section("4.6 Data Design", "##", topic=topic, front_matter=fm)
+        self.assertIn("incident_records", sec_46)
+        for forbidden in ["users", "reports", "otp_codes", "SQLite"]:
+            self.assertNotIn(forbidden, sec_46)
+
+        sec_73 = build_deterministic_data_dictionary_section("7.3 Data Dictionary", "##", topic=topic, front_matter=fm)
+        self.assertIn("Table 7.1: Database tables", sec_73)
+        self.assertIn("incident_records", sec_73)
+        self.assertIn("hotspot_clusters", sec_73)
+        for forbidden in ["otp_codes", "run_checkpoints", "research_sources"]:
+            self.assertNotIn(forbidden, sec_73)
+
+        sec_103 = build_deterministic_installation_section("10.3 Installation Process", "###", topic=topic, front_matter=fm)
+        self.assertIn("pip install -r requirements.txt && python app.py", sec_103)
+        for forbidden in ["cd backend", "port 8001", "cd frontend", "npm run dev"]:
+            self.assertNotIn(forbidden, sec_103)
+
+        # 3. Appendix B Glossary
+        glossary = format_appendix_b_glossary(is_citebolt=False)
+        self.assertIn("DBMS", glossary)
+        self.assertIn("CRUD", glossary)
+        self.assertIn("SRS", glossary)
+        for forbidden in ["LangGraph", "FastAPI", "Tavily", "Groq", "SSE", "CiteBolt"]:
+            self.assertNotIn(forbidden, glossary)
+
+        # 4. Abstract
+        abs_text = synthesize_academic_abstract(
+            "Crime Pattern Analysis",
+            "Predictive Policing",
+            fs,
+            is_citebolt=False,
+        )
+        for forbidden in ["LangGraph", "FastAPI", "SQLite", "React", "Vite", "ReportLab"]:
+            self.assertNotIn(forbidden, abs_text)
+
+        # 5. Full Report Assembly with mocked generation
+        def mock_generate_text(prompt, *args, **kwargs):
+            return "Crime patterns are evaluated using machine learning algorithms across spatial coordinates.", {
+                "input_tokens": 50,
+                "output_tokens": 50,
+                "total_tokens": 100,
+                "finish_reason": "stop",
+            }
+
+        def mock_collect(q, *args, **kwargs):
+            return [
+                {
+                    "title": "Machine Learning in Predictive Policing",
+                    "url": "https://arxiv.org/abs/2101.00000",
+                    "content": "A survey of spatial temporal crime forecasting methods using Random Forests.",
+                }
+            ]
+
+        outline = [
+            {"level": 1, "title": "Title page", "is_auto": True},
+            {"level": 1, "title": "Certificate", "is_auto": True},
+            {"level": 1, "title": "Abstract", "target_words": 250},
+            {"level": 1, "title": "Chapter 1 Introduction"},
+            {"level": 2, "title": "1.1 Overview of the Domain", "target_words": 150},
+            {"level": 2, "title": "1.5 Scope of the System", "target_words": 150},
+            {"level": 1, "title": "Chapter 4 System Design"},
+            {"level": 2, "title": "4.6 Data Design", "target_words": 150},
+            {"level": 1, "title": "Chapter 7 Software Implementation"},
+            {"level": 2, "title": "7.3 Database Design (Data Dictionary)", "target_words": 150},
+            {"level": 1, "title": "Chapter 10 Deployment and Maintenance"},
+            {"level": 2, "title": "10.3 Installation Process", "target_words": 150},
+            {"level": 2, "title": "10.5 Maintenance", "target_words": 150},
+            {"level": 2, "title": "10.6 Backup and Recovery", "target_words": 150},
+            {"level": 2, "title": "10.7 Challenges During Deployment", "target_words": 150},
+            {"level": 2, "title": "10.8 Summary", "target_words": 150},
+            {"level": 1, "title": "Appendix B: Glossary", "is_auto": True},
+        ]
+
+        state = {
+            "topic": topic,
+            "context": "Predictive policing platform using spatial crime clustering.",
+            "report_type": "college",
+            "outline": outline,
+            "front_matter": fm,
+        }
+
+        with patch.object(section_engine, "_collect_sources", side_effect=mock_collect), patch.object(
+            section_engine, "generate_text", side_effect=mock_generate_text
+        ):
+            res = section_engine.run_section_pipeline(state, lambda ev: None, lambda: False)
+
+        report = res.get("report", "")
+        self.assertTrue(len(report) > 0)
+        for forbidden in ["LangGraph", "Tavily", "Groq", "FastAPI", "reports.db", "otp_codes", "8001"]:
+            self.assertNotIn(forbidden, report)
+        self.assertIn("incident_records", report)
+        self.assertIn("pip install -r requirements.txt && python app.py", report)
+
+    def test_citebolt_preset_explicitly_retains_citebolt_facts(self):
+        """Item 6: CiteBolt preset retains all CiteBolt facts when opt-in preset is selected."""
+        fm_cb = {
+            "projectTitle": "CiteBolt",
+            "technologies": "FastAPI, React, Vite, Tailwind CSS, SQLite, SQLAlchemy, LangGraph",
+            "useCiteboltPreset": True,
+        }
+        fs = build_compact_project_fact_sheet("CiteBolt", "", fm_cb)
+        self.assertIn("LangGraph", fs)
+        self.assertIn("FastAPI", fs)
+        self.assertIn("SQLite is the only database", fs)
+
+        from app.agents.section_engine import (
+            build_deterministic_installation_section,
+            build_deterministic_data_dictionary_section,
+            format_appendix_b_glossary,
+        )
+        inst = build_deterministic_installation_section("10.3 Installation Process", front_matter=fm_cb)
+        self.assertIn("uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload", inst)
+
+        dd = build_deterministic_data_dictionary_section("7.3 Data Dictionary", front_matter=fm_cb)
+        self.assertIn("users", dd)
+        self.assertIn("otp_codes", dd)
+
+        glossary = format_appendix_b_glossary(is_citebolt=True)
+        self.assertIn("LangGraph", glossary)
+        self.assertIn("FastAPI", glossary)
+
 
 if __name__ == "__main__":
     unittest.main()
