@@ -1717,15 +1717,14 @@ Numbered deployment steps:
 
     def test_endpoint_count_equals_len_verified_endpoints(self):
         """Test that VERIFIED_ENDPOINT_COUNT equals len(VERIFIED_API_ENDPOINTS) and filtering enforces it."""
-        facts = "Project Facts: SQLite database with 6 tables and 25 endpoints."
+        facts = f"Project Facts: SQLite database with {VERIFIED_TABLE_COUNT} tables and {VERIFIED_ENDPOINT_COUNT} endpoints."
 
-        # A. Endpoint count equals len(VERIFIED_API_ENDPOINTS) and matches 25
+        # A. Endpoint count equals len(VERIFIED_API_ENDPOINTS)
         self.assertEqual(VERIFIED_ENDPOINT_COUNT, len(VERIFIED_API_ENDPOINTS))
-        self.assertEqual(VERIFIED_ENDPOINT_COUNT, 25)
         self.assertEqual(VERIFIED_TABLE_COUNT, len(VERIFIED_TABLE_NAMES))
         self.assertEqual(VERIFIED_TABLE_COUNT, 6)
 
-        # B. Filter accepts verified count (25) and rejects wrong count (10, 12, etc.)
+        # B. Filter accepts verified count and rejects wrong count (10, 12, etc.)
         sec_valid = f"The FastAPI backend registers {VERIFIED_ENDPOINT_COUNT} endpoints for core services."
         filtered_valid = filter_grounded_college_section("5.4 Backend Architecture", sec_valid, facts)
         self.assertIn(f"{VERIFIED_ENDPOINT_COUNT} endpoints", filtered_valid)
@@ -2874,6 +2873,69 @@ Numbered deployment steps:
         glossary = format_appendix_b_glossary(is_citebolt=True)
         self.assertIn("LangGraph", glossary)
         self.assertIn("FastAPI", glossary)
+
+    def test_preset_tables_and_endpoints_derived_from_models_and_routes(self):
+        """Test that preset's table names equal Base.metadata.tables keys and every preset endpoint exists in app.routes."""
+        from app.models import Base
+        from app.main import app
+        from app.agents.section_engine import (
+            get_preset_database_tables,
+            get_preset_endpoints,
+            get_preset_relationships,
+            VERIFIED_DATABASE_TABLES,
+            VERIFIED_TABLE_NAMES,
+            VERIFIED_API_ENDPOINTS,
+            VERIFIED_SCHEMA_RELATIONSHIPS,
+        )
+
+        # 1. Preset table names equal Base.metadata.tables keys
+        expected_table_keys = list(Base.metadata.tables.keys())
+        preset_tables = get_preset_database_tables()
+        preset_table_names = [t["name"] for t in preset_tables]
+
+        self.assertEqual(set(preset_table_names), set(expected_table_keys))
+        self.assertEqual(set(VERIFIED_TABLE_NAMES), set(expected_table_keys))
+        self.assertEqual(sorted(preset_table_names), sorted(expected_table_keys))
+        self.assertEqual(
+            sorted(preset_table_names),
+            ["contact_messages", "otp_codes", "runs", "templates", "user_settings", "users"],
+        )
+
+        # Check each table has exact columns matching Base.metadata.tables
+        for t in preset_tables:
+            table_obj = Base.metadata.tables[t["name"]]
+            expected_cols = [c.name for c in table_obj.columns]
+            actual_cols = [c.strip() for c in t["columns"].split(",")]
+            self.assertEqual(actual_cols, expected_cols, f"Mismatch in columns for table {t['name']}")
+
+        # Foreign key relationships match models.py
+        expected_fks = []
+        for t_name, table_obj in Base.metadata.tables.items():
+            for fk in table_obj.foreign_keys:
+                expected_fks.append(f"{t_name}.{fk.parent.name} -> {fk.column.table.name}.{fk.column.name}")
+        self.assertEqual(sorted(get_preset_relationships()), sorted(expected_fks))
+        self.assertEqual(sorted(VERIFIED_SCHEMA_RELATIONSHIPS), sorted(expected_fks))
+
+        # 2. Every preset endpoint exists in app.routes
+        preset_endpoints = get_preset_endpoints()
+        self.assertTrue(len(preset_endpoints) > 0)
+        self.assertEqual(preset_endpoints, VERIFIED_API_ENDPOINTS)
+
+        # Collect all valid (method, path) pairs from app.routes
+        app_endpoints = set()
+        for route in app.routes:
+            if hasattr(route, "path") and hasattr(route, "methods"):
+                for m in route.methods:
+                    if m not in ("HEAD", "OPTIONS"):
+                        app_endpoints.add(f"{m} {route.path}")
+
+        for ep in preset_endpoints:
+            self.assertIn(ep, app_endpoints, f"Preset endpoint '{ep}' not found in app.routes")
+
+        # Confirm auth endpoints are request-otp and verify-otp, not send-otp
+        self.assertIn("POST /api/auth/request-otp", preset_endpoints)
+        self.assertIn("POST /api/auth/verify-otp", preset_endpoints)
+        self.assertNotIn("POST /api/auth/send-otp", preset_endpoints)
 
 
 if __name__ == "__main__":

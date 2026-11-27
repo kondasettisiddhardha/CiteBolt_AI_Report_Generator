@@ -30,52 +30,115 @@ logger = logging.getLogger("citebolt.section_engine")
 
 
 # --- Single Source of Truth for Database Schema & Verified API Endpoints ---
-VERIFIED_DATABASE_TABLES: list[dict[str, str]] = [
-    {
-        "name": "users",
-        "columns": "id, email, created_at",
-        "purpose": "Stores registered user identity and email address.",
-    },
-    {
-        "name": "otp_codes",
-        "columns": "id, email, code_hash, expires_at, attempts, created_at",
-        "purpose": "Manages time-sensitive one-time password verification tokens.",
-    },
-    {
-        "name": "runs",
-        "columns": "id, user_id, topic, title, report_type, status, report_markdown, sources_json, sources_count, word_count, token_count, cost_usd, elapsed_seconds, error_message, context, created_at, completed_at, length, target_words, outline_json, front_matter_json",
-        "purpose": "Persists report generation workflows, outlines, and markdown artifacts.",
-    },
-    {
-        "name": "templates",
-        "columns": "id, user_id, name, outline_json, created_at",
-        "purpose": "Stores predefined and custom report structural templates.",
-    },
-    {
-        "name": "user_settings",
-        "columns": "user_id, default_report_type, default_export_format, theme, notify_on_complete, created_at",
-        "purpose": "Retains user preference settings including interface display theme.",
-    },
-    {
-        "name": "contact_messages",
-        "columns": "id, name, email, subject, message, user_id, created_at",
-        "purpose": "Captures user feedback and contact form submissions.",
-    },
-]
+def get_preset_database_tables() -> list[dict[str, str]]:
+    """Derive verified database tables dynamically from backend/app/models.py (Base.metadata.tables)."""
+    try:
+        from app.models import Base
+        table_purposes = {
+            "users": "Stores registered user identity and email address.",
+            "otp_codes": "Manages time-sensitive one-time password verification tokens.",
+            "runs": "Persists report generation workflows, outlines, and markdown artifacts.",
+            "templates": "Stores predefined and custom report structural templates.",
+            "user_settings": "Retains user preference settings including interface display theme.",
+            "contact_messages": "Captures user feedback and contact form submissions.",
+        }
+        tables = []
+        for table_name, table in Base.metadata.tables.items():
+            cols = ", ".join(c.name for c in table.columns)
+            purpose = table_purposes.get(table_name, f"Manages {table_name} records.")
+            tables.append({
+                "name": table_name,
+                "columns": cols,
+                "purpose": purpose,
+            })
+        return tables
+    except Exception:
+        return [
+            {"name": "users", "columns": "id, email, created_at", "purpose": "Stores registered user identity and email address."},
+            {"name": "otp_codes", "columns": "id, email, code_hash, expires_at, attempts, created_at", "purpose": "Manages time-sensitive one-time password verification tokens."},
+            {"name": "runs", "columns": "id, user_id, topic, title, report_type, status, report_markdown, sources_json, sources_count, word_count, token_count, cost_usd, elapsed_seconds, error_message, context, created_at, completed_at, length, target_words, outline_json, front_matter_json", "purpose": "Persists report generation workflows, outlines, and markdown artifacts."},
+            {"name": "templates", "columns": "id, user_id, name, outline_json, created_at", "purpose": "Stores predefined and custom report structural templates."},
+            {"name": "user_settings", "columns": "user_id, default_report_type, default_export_format, theme, notify_on_complete, created_at", "purpose": "Retains user preference settings including interface display theme."},
+            {"name": "contact_messages", "columns": "id, name, email, subject, message, user_id, created_at", "purpose": "Captures user feedback and contact form submissions."},
+        ]
 
+
+def get_preset_relationships() -> list[str]:
+    """Derive foreign key relationships dynamically from backend/app/models.py (Base.metadata.tables)."""
+    try:
+        from app.models import Base
+        relationships = []
+        for table_name, table in Base.metadata.tables.items():
+            for fk in table.foreign_keys:
+                target = f"{fk.column.table.name}.{fk.column.name}"
+                relationships.append(f"{table_name}.{fk.parent.name} -> {target}")
+        return sorted(relationships)
+    except Exception:
+        return [
+            "runs.user_id -> users.id",
+            "templates.user_id -> users.id",
+            "user_settings.user_id -> users.id",
+        ]
+
+
+def get_preset_endpoints() -> list[str]:
+    """Derive verified API endpoints dynamically from the FastAPI app routes in backend/app/main.py."""
+    try:
+        from app.main import app
+        endpoints: list[str] = []
+        seen = set()
+        for route in app.routes:
+            if hasattr(route, "path") and hasattr(route, "methods"):
+                path = route.path
+                if not path.startswith("/api"):
+                    continue
+                for method in sorted(route.methods):
+                    if method in ("HEAD", "OPTIONS"):
+                        continue
+                    ep = f"{method} {path}"
+                    if ep not in seen:
+                        seen.add(ep)
+                        endpoints.append(ep)
+        return endpoints
+    except Exception:
+        return [
+            "GET /api/health",
+            "POST /api/auth/request-otp",
+            "POST /api/auth/verify-otp",
+            "POST /api/auth/logout",
+            "GET /api/auth/me",
+            "GET /api/runs",
+            "POST /api/research",
+            "POST /api/runs/{run_id}/resume",
+            "GET /api/runs/{run_id}",
+            "PATCH /api/runs/{run_id}",
+            "DELETE /api/runs/{run_id}",
+            "DELETE /api/runs",
+            "POST /api/runs/{run_id}/cancel",
+            "POST /api/runs/{run_id}/finalize",
+            "POST /api/runs/{run_id}/finalise",
+            "POST /api/runs/{run_id}/retry",
+            "GET /api/runs/{run_id}/stream",
+            "GET /api/runs/{run_id}/export",
+            "POST /api/extract",
+            "POST /api/templates/outline",
+            "GET /api/templates",
+            "POST /api/templates",
+            "DELETE /api/templates/{template_id}",
+            "GET /api/settings",
+            "PUT /api/settings",
+            "POST /api/contact",
+            "GET /api/config",
+        ]
+
+
+VERIFIED_DATABASE_TABLES: list[dict[str, str]] = get_preset_database_tables()
 VERIFIED_TABLE_NAMES: list[str] = [t["name"] for t in VERIFIED_DATABASE_TABLES]
-VERIFIED_TABLE_COUNT: int = len(VERIFIED_TABLE_NAMES)  # 6
+VERIFIED_TABLE_COUNT: int = len(VERIFIED_TABLE_NAMES)
 REAL_DB_TABLES: set[str] = set(VERIFIED_TABLE_NAMES)
-
-# Verified foreign key relationships verified directly in models.py:
-# - Run.user_id -> User.id (ForeignKey("users.id", ondelete="CASCADE"))
-# - Template.user_id -> User.id (ForeignKey("users.id", ondelete="CASCADE"))
-# - UserSettings.user_id -> User.id (ForeignKey("users.id", ondelete="CASCADE"))
-VERIFIED_SCHEMA_RELATIONSHIPS: list[str] = [
-    "runs.user_id -> users.id",
-    "templates.user_id -> users.id",
-    "user_settings.user_id -> users.id",
-]
+VERIFIED_SCHEMA_RELATIONSHIPS: list[str] = get_preset_relationships()
+VERIFIED_API_ENDPOINTS: list[str] = get_preset_endpoints()
+VERIFIED_ENDPOINT_COUNT: int = len(VERIFIED_API_ENDPOINTS)
 
 # Verified database file name dynamically inspected from code:
 def get_verified_db_filename() -> str:
@@ -96,42 +159,12 @@ def get_verified_db_filename() -> str:
         pass
     return "the SQLite database file"
 
-# Verified API endpoints verified directly in main.py:
-VERIFIED_API_ENDPOINTS: list[str] = [
-    "GET /api/health",
-    "POST /api/auth/request-otp",
-    "POST /api/auth/verify-otp",
-    "POST /api/auth/logout",
-    "GET /api/auth/me",
-    "GET /api/runs",
-    "POST /api/research",
-    "POST /api/runs/{run_id}/resume",
-    "GET /api/runs/{run_id}",
-    "PATCH /api/runs/{run_id}",
-    "DELETE /api/runs/{run_id}",
-    "DELETE /api/runs",
-    "POST /api/runs/{run_id}/cancel",
-    "POST /api/runs/{run_id}/retry",
-    "GET /api/runs/{run_id}/stream",
-    "GET /api/runs/{run_id}/export",
-    "POST /api/extract",
-    "POST /api/templates/outline",
-    "GET /api/templates",
-    "POST /api/templates",
-    "DELETE /api/templates/{template_id}",
-    "GET /api/settings",
-    "PUT /api/settings",
-    "POST /api/contact",
-    "GET /api/config",
-]
-
-VERIFIED_ENDPOINT_COUNT: int = len(VERIFIED_API_ENDPOINTS)  # 25
-
 WORD_NUMBERS: dict[str, int] = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
     "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
     "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
     "eighteen": 18, "nineteen": 19, "twenty": 20, "twenty-five": 25, "twenty five": 25,
+    "twenty-six": 26, "twenty six": 26, "twenty-seven": 27, "twenty seven": 27,
 }
 
 GENERIC_GLOSSARY: list[dict[str, str]] = [
